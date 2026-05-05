@@ -3,13 +3,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createOpencodeClient } from '@opencode-ai/sdk';
-import { createPatch } from 'diff';
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { fetchWithAuth } from './fetch.js';
 import { resolveDirectory } from './config.js';
 import { PartSchema } from './parts.js';
 import { createSession, runPrompt, getDiff } from './handlers.js';
+import { readRegistry } from './registry.js';
+import { addSession, lookupSession, removeSession, readSessionMap } from './sessions.js';
 
 // CORE-08: Base URL from PREFECT_SERVER_URL env var (OPENCODE_URL accepted with deprecation warning)
 const BASE_URL =
@@ -21,11 +22,76 @@ const BASE_URL =
   })() ??
   'http://localhost:4096';
 const TIMEOUT_MS = parseInt(process.env.PREFECT_TIMEOUT_MS ?? '', 10) || 120_000;
-const client = createOpencodeClient({ baseUrl: BASE_URL, fetch: fetchWithAuth });
+
+// D-01..D-03: per-URL client cache. Replaces the single global client so the
+// MCP server can route tool calls to multiple OpenCode instances.
+const clientCache = new Map<string, ReturnType<typeof createOpencodeClient>>();
+
+function getClient(serverUrl: string): ReturnType<typeof createOpencodeClient> {
+  let c = clientCache.get(serverUrl);
+  if (!c) {
+    c = createOpencodeClient({ baseUrl: serverUrl, fetch: fetchWithAuth });
+    clientCache.set(serverUrl, c);
+  }
+  return c;
+}
+
+// D-06: server URL resolution fallback chain.
+//   1. sessionId → sessions.json lookup → that session's server URL
+//   2. serverName (entry points only) → registry lookup by name
+//   3. no inputs → first entry in registry
+//   4. registry empty → BASE_URL (PREFECT_SERVER_URL env var)
+// D-07: unknown serverName throws with the exact message below.
+function resolveServerUrl(sessionId?: string, serverName?: string): string {
+  if (sessionId) {
+    const entry = lookupSession(sessionId);
+    if (entry) return entry.url;
+    throw new Error(
+      `Session '${sessionId}' not found in sessions.json. It may have been deleted or never created via prefect_create_session.`,
+    );
+  }
+  if (serverName) {
+    const reg = readRegistry();
+    const found = reg.servers.find((s) => s.name === serverName);
+    if (!found) {
+      throw new Error(
+        `Server '${serverName}' not found in registry. Run 'prefect list-servers' to see registered servers.`,
+      );
+    }
+    return `http://${found.host}:${found.port}`;
+  }
+  const reg = readRegistry();
+  if (reg.servers.length > 0) {
+    const s = reg.servers[0];
+    return `http://${s.host}:${s.port}`;
+  }
+  return BASE_URL;
+}
+
+// D-12 helper: SDK returns { data, error } pairs; 404 surfaces as either { status: 404 }
+// or { name: 'NotFoundError' } depending on the SDK version and endpoint.
+// Without this check, every API error (400, 403, 500) would be treated as a stale session.
+function isNotFound(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as Record<string, unknown>;
+  return e.status === 404 || e.name === 'NotFoundError';
+}
+
+// Resolve the canonical server name for a URL — used by entry points to write
+// sessions.json with both name and URL (D-08). Falls back to the supplied
+// serverParam (entry point's optional input) or the literal 'default' when
+// no registry match exists (registry-empty fallback path).
+function serverNameForUrl(serverUrl: string, serverParam?: string): string {
+  if (serverParam) return serverParam;
+  const reg = readRegistry();
+  const found = reg.servers.find((s) => `http://${s.host}:${s.port}` === serverUrl);
+  return found?.name ?? 'default';
+}
 
 export { resolveDirectory };
 
-const server = new McpServer({ name: 'prefect', version: '1.0.0' });
+const packageVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+const server = new McpServer({ name: 'prefect', version: packageVersion });
 
 // CORE-01: Create a new OpenCode session
 server.registerTool(
@@ -36,12 +102,22 @@ server.registerTool(
       title: z.string().optional().describe('Optional display title for the session'),
       parentID: z.string().optional().describe('Optional parent session ID — creates this session as a child of the given parent for hierarchy tracking.'),
       directory: z.string().optional().describe('Absolute path to the project root for this session. Defaults to the directory OpenCode was started from.'),
+      server: z.string().min(1).optional().describe(
+        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+      ),
     }),
   },
-  async ({ title, parentID, directory }) => {
+  async ({ title, parentID, directory, server: serverParam }) => {
     const dir = resolveDirectory(directory);
     try {
-      const session = await createSession(client, title, dir, parentID);
+      const serverUrl = resolveServerUrl(undefined, serverParam);
+      const serverName = serverNameForUrl(serverUrl, serverParam);
+      const reg = readRegistry();
+      const serverEntry = reg.servers.find((s) => s.name === serverName);
+      const model = (serverEntry?.providerID && serverEntry?.modelID)
+        ? { providerID: serverEntry.providerID, modelID: serverEntry.modelID }
+        : undefined;
+      const session = await createSession(getClient(serverUrl), title, dir, parentID, serverUrl, serverName, model, serverEntry?.maxSessions);
       return { content: [{ type: 'text', text: JSON.stringify(session) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -55,18 +131,30 @@ server.registerTool(
   {
     description: 'Abort a running OpenCode session. Returns true on success.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID returned from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID returned from prefect_create_session'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.abort({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.abort({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: String(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -80,14 +168,14 @@ server.registerTool(
 // Uses AbortController so timeout cancels the in-flight TCP connection rather
 // than orphaning it (the previous Promise.race left the request running on
 // OpenCode after we gave up on it). Response parts are validated against
-// PartSchema and returned as a structured { info, parts } payload.
+// PartSchema in handlers.ts:runPrompt and returned as a structured { info, parts } payload.
 server.registerTool(
   'prefect_run',
   {
     description:
       'Send a prompt to an OpenCode session and block until the agent finishes. Returns { info: AssistantMessage, parts: Part[] } as JSON. Optional model/agent/system override the session defaults for this single call. May take seconds to minutes depending on task complexity.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID from prefect_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
       directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
       // RUN-01: model override — both providerID AND modelID required together
@@ -110,7 +198,10 @@ server.registerTool(
         type: z.literal('file'),
         mime: z.string(),
         filename: z.string().optional(),
-        url: z.string(),
+        url: z.string().refine(
+          (u) => u.startsWith('file://'),
+          { message: 'files[].url must be a file:// URI' }
+        ),
       })).optional()
         .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
       // RUN-07: message ID assignment (idempotency key for user message creation)
@@ -130,14 +221,20 @@ server.registerTool(
         agent: z.string(),
       }).optional()
         .describe('Structured subtask part input — delegate a subtask to a specific agent.'),
-    }),
+    }).refine(
+      (v) => !(v.agent && v.agentInput),
+      { message: 'Provide either agent or agentInput, not both — they are mutually exclusive overrides' }
+    ),
   },
   async ({ sessionId, prompt, directory, model, agent, system, tools, files, messageID, agentInput, subtaskInput }) => {
     const dir = resolveDirectory(directory);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const result = await runPrompt(client, sessionId, prompt, { model, agent, system, tools, files, messageID, agentInput, subtaskInput }, dir, controller.signal);
+      const serverUrl = resolveServerUrl(sessionId);
+      const stored = lookupSession(sessionId)?.model;
+      const effectiveModel = model ?? (stored?.providerID && stored?.modelID ? stored : undefined);
+      const result = await runPrompt(getClient(serverUrl), sessionId, prompt, { model: effectiveModel, agent, system, tools, files, messageID, agentInput, subtaskInput }, dir, controller.signal);
       clearTimeout(timer);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (err) {
@@ -151,6 +248,22 @@ server.registerTool(
             },
           ],
           isError: true,
+        };
+      }
+      // D-12 stale-session detection inside the JSON-encoded error string from runPrompt
+      if (typeof (err as Error).message === 'string' && (
+        (err as Error).message.includes('"status":404') ||
+        (err as Error).message.includes('"NotFoundError"')
+      )) {
+        const entry = lookupSession(sessionId);
+        removeSession(sessionId);
+        const staleUrl = entry?.url ?? resolveServerUrl();
+        return {
+          content: [{ type: 'text', text:
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+          }], isError: true,
         };
       }
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -168,7 +281,7 @@ server.registerTool(
     description:
       'Send a prompt to an OpenCode session and return immediately without waiting for the agent to finish. Returns { sessionId, accepted: true } on success. Use prefect_session_status to poll for completion, then prefect_session_messages or prefect_get_diff to retrieve results.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID from prefect_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
       directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
       model: z
@@ -188,7 +301,10 @@ server.registerTool(
         type: z.literal('file'),
         mime: z.string(),
         filename: z.string().optional(),
-        url: z.string(),
+        url: z.string().refine(
+          (u) => u.startsWith('file://'),
+          { message: 'files[].url must be a file:// URI' }
+        ),
       })).optional()
         .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
       // RUN-07: message ID assignment (idempotency key for user message creation)
@@ -208,12 +324,16 @@ server.registerTool(
         agent: z.string(),
       }).optional()
         .describe('Structured subtask part input — delegate a subtask to a specific agent.'),
-    }),
+    }).refine(
+      (v) => !(v.agent && v.agentInput),
+      { message: 'Provide either agent or agentInput, not both — they are mutually exclusive overrides' }
+    ),
   },
   async ({ sessionId, prompt, directory, model, agent, system, tools, files, messageID, agentInput, subtaskInput }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { error } = await client.session.promptAsync({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { error } = await getClient(serverUrl).session.promptAsync({
         path: { id: sessionId },
         body: {
           parts: [
@@ -230,7 +350,18 @@ server.registerTool(
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return {
         content: [
           { type: 'text', text: JSON.stringify({ sessionId, accepted: true }) },
@@ -248,7 +379,7 @@ server.registerTool(
   {
     description: 'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       messageID: z.string().optional().describe('Optional message ID to scope the diff to a single message'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
@@ -256,9 +387,26 @@ server.registerTool(
   async ({ sessionId, messageID, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const diffs = await getDiff(client, sessionId, messageID, dir);
+      const serverUrl = resolveServerUrl(sessionId);
+      const diffs = await getDiff(getClient(serverUrl), sessionId, messageID, dir);
       return { content: [{ type: 'text', text: JSON.stringify(diffs) }] };
     } catch (err) {
+      // D-12 stale-session detection inside the JSON-encoded error string from getDiff
+      if (typeof (err as Error).message === 'string' && (
+        (err as Error).message.includes('"status":404') ||
+        (err as Error).message.includes('"NotFoundError"')
+      )) {
+        const entry = lookupSession(sessionId);
+        removeSession(sessionId);
+        const staleUrl = entry?.url ?? resolveServerUrl();
+        return {
+          content: [{ type: 'text', text:
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+          }], isError: true,
+        };
+      }
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
   }
@@ -272,7 +420,7 @@ server.registerTool(
   {
     description: 'Respond to an OpenCode permission request. once = approve this request only; always = approve similar future requests; reject = deny.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       permissionId: z.string().describe('Permission request ID'),
       response: z.enum(['once', 'always', 'reject']).describe(
         'once = approve this request only; always = approve similar future requests; reject = deny'
@@ -283,13 +431,25 @@ server.registerTool(
   async ({ sessionId, permissionId, response, directory }) => {
     const dir = resolveDirectory(directory);
     try {
+      const serverUrl = resolveServerUrl(sessionId);
       // CRITICAL: permissions method is on TOP-LEVEL client, NOT client.session
-      const { data, error } = await client.postSessionIdPermissionsPermissionId({
+      const { data, error } = await getClient(serverUrl).postSessionIdPermissionsPermissionId({
         path: { id: sessionId, permissionID: permissionId },
         body: { response },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -303,7 +463,7 @@ server.registerTool(
   {
     description: 'Fork an OpenCode session, optionally at a specific message. Returns a new Session. Use this as an escape hatch when a session has gone off the rails.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to fork from'),
+      sessionId: z.string().min(1).describe('Session ID to fork from'),
       messageID: z.string().optional().describe('Optional message ID to fork at; if omitted, forks at the current tip'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
@@ -311,12 +471,31 @@ server.registerTool(
   async ({ sessionId, messageID, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.fork({
+      const serverUrl = resolveServerUrl(sessionId);
+      // Capture sourceEntry before the async fork call to avoid a race condition
+      // where another process removes the session from sessions.json during the API call.
+      const sourceEntry = lookupSession(sessionId);
+      const { data, error } = await getClient(serverUrl).session.fork({
         path: { id: sessionId },
         ...(messageID ? { body: { messageID } } : {}),
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${sourceEntry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
+      // Persist the forked session so subsequent tool calls can route to the same server.
+      // Store parentId so prefect_session_children can find fork-created children locally.
+      if (data && sourceEntry) {
+        addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId });
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -330,7 +509,7 @@ server.registerTool(
   {
     description: 'Revert an OpenCode session to a prior message. messageID is required. Optionally scope to a specific part of that message via partID.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       messageID: z.string().describe('Required: message ID to revert to'),
       partID: z.string().optional().describe('Optional: specific part within the message'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
@@ -339,12 +518,24 @@ server.registerTool(
   async ({ sessionId, messageID, partID, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.revert({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.revert({
         path: { id: sessionId },
         body: { messageID, ...(partID ? { partID } : {}) },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -364,7 +555,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.list({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).session.list({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -381,18 +573,30 @@ server.registerTool(
   {
     description: 'Fetch a single OpenCode session by ID. Returns the full Session object including id, title, directory, parentID (if forked), and revert state.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to fetch'),
+      sessionId: z.string().min(1).describe('Session ID to fetch'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.get({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.get({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -412,7 +616,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.status({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).session.status({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -429,7 +634,7 @@ server.registerTool(
   {
     description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       limit: z.number().int().positive().optional().describe(
         'Maximum number of messages to return. Returns the most recent N messages — there is no offset or cursor. Omit to return all messages.'
       ),
@@ -439,11 +644,23 @@ server.registerTool(
   async ({ sessionId, limit, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.messages({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.messages({
         path: { id: sessionId },
         query: { ...(limit !== undefined ? { limit } : {}), ...(dir ? { directory: dir } : {}) },
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -457,7 +674,7 @@ server.registerTool(
   {
     description: 'Fetch a single message by ID within an OpenCode session. Returns the message info and all its parts (TextPart, ToolPart, PatchPart, etc.).',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       messageId: z.string().describe('Message ID to fetch'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
@@ -465,11 +682,23 @@ server.registerTool(
   async ({ sessionId, messageId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.message({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.message({
         path: { id: sessionId, messageID: messageId },  // SDK path param is messageID (capital D)
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -483,18 +712,31 @@ server.registerTool(
   {
     description: 'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using prefect_session_rename to archive instead of deleting.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to delete'),
+      sessionId: z.string().min(1).describe('Session ID to delete'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.delete({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.delete({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
+      removeSession(sessionId);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -508,7 +750,7 @@ server.registerTool(
   {
     description: 'Rename an OpenCode session. Returns the full updated Session object.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to rename'),
+      sessionId: z.string().min(1).describe('Session ID to rename'),
       title: z.string().describe('New display title for the session'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
@@ -516,12 +758,24 @@ server.registerTool(
   async ({ sessionId, title, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.update({  // NOT client.session.rename — does not exist
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.update({  // NOT client.session.rename — does not exist
         path: { id: sessionId },
         body: { title },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -533,21 +787,43 @@ server.registerTool(
 server.registerTool(
   'prefect_session_children',
   {
-    description: 'List all child sessions forked from this session. Returns an empty array if no forks have been made from this session. Use prefect_fork to create child sessions.',
+    description: 'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use prefect_fork to create child sessions.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Parent session ID — must be a session that was previously forked from'),
+      sessionId: z.string().min(1).describe('Parent session ID — the session that child forks were created from (not a child session ID)'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.children({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.children({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
+      // OpenCode only tracks sessions created with parentID (native children).
+      // Fork-created sessions are tracked locally in sessions.json with parentId set.
+      // Merge both sources, deduplicating by session id.
+      const serverChildren: Array<{ id: string }> = (data as Array<{ id: string }>) ?? [];
+      const serverChildIds = new Set(serverChildren.map((s) => s.id));
+      const localMap = readSessionMap();
+      const localChildren = Object.entries(localMap.sessions)
+        .filter(([id, e]) => e.parentId === sessionId && !serverChildIds.has(id))
+        .map(([id, e]) => ({ id, server: e.server, url: e.url }));
+      const merged = [...serverChildren, ...localChildren];
+      return { content: [{ type: 'text', text: JSON.stringify(merged) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
@@ -560,19 +836,31 @@ server.registerTool(
   {
     description: 'Restore all messages removed by a prior prefect_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to unrevert — must have been previously reverted'),
+      sessionId: z.string().min(1).describe('Session ID to unrevert — must have been previously reverted'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.unrevert({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.unrevert({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
         // NO body — SessionUnrevertData.body is typed `never`
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -592,7 +880,7 @@ server.registerTool(
     description:
       'Run a slash command inside an OpenCode session (e.g. compact, clear). Returns { info: AssistantMessage, parts: Part[] } as JSON. Use this for session-level operations that have no equivalent SDK method.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       command: z.string().describe('The slash command name without the leading slash (e.g. "compact")'),
       arguments: z.string().describe('Arguments string to pass to the command (use empty string if none)'),
       messageID: z.string().optional().describe('Optional message ID for context'),
@@ -607,7 +895,8 @@ server.registerTool(
   async ({ sessionId, command, arguments: args, messageID, agent, model, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.command({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.command({
         path: { id: sessionId },
         body: {
           command,
@@ -618,8 +907,25 @@ server.registerTool(
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
+      if (!data) throw new Error('Session command returned no data');
+      const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
+      if (!cmdParseResult.success) {
+        console.error('PartSchema validation warning (prefect_session_command):', cmdParseResult.error.message);
+      }
+      const cmdParts = cmdParseResult.success ? cmdParseResult.data : (data as { parts?: unknown }).parts;
+      return { content: [{ type: 'text', text: JSON.stringify({ info: (data as { info?: unknown }).info, parts: cmdParts }) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
@@ -634,8 +940,16 @@ server.registerTool(
   'prefect_delegate',
   {
     description:
-      'Blocking composite: create a session, run a prompt, and return { sessionId, result, diff } in one call. Replicates the canonical three-step Prefect loop. Session stays alive after completion — call prefect_session_delete to clean up. Aborts the session and returns an error if PREFECT_TIMEOUT_MS is exceeded.',
+      'Blocking composite: run a prompt and return { sessionId, result, diff } in one call. ' +
+      'When sessionId is provided: reuses that existing session (server/title/directory ignored). ' +
+      'When omitted: creates a new session on the named server (server defaults to first registered or PREFECT_SERVER_URL). ' +
+      'Session stays alive after completion — call prefect_session_delete to clean up. ' +
+      'On timeout (PREFECT_TIMEOUT_MS exceeded): aborts the in-flight run (both new and reused sessions) and returns isError:true — session itself is kept alive. ' +
+      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use prefect_create_session + prefect_run directly for those features.',
     inputSchema: z.object({
+      sessionId: z.string().optional().describe(
+        'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
+      ),
       prompt: z.string().describe('The coding task or instruction to execute'),
       title: z.string().optional().describe('Optional display title for the created session'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
@@ -645,26 +959,69 @@ server.registerTool(
         .describe('Override the model for this call. Both providerID and modelID required together.'),
       agent: z.string().optional().describe('Override the agent for this call.'),
       system: z.string().optional().describe('Override the system prompt for this call.'),
+      server: z.string().min(1).optional().describe(
+        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+      ),
     }),
   },
-  async ({ prompt, title, directory, model, agent, system }) => {
-    const dir = resolveDirectory(directory);
+  async ({ sessionId: providedSessionId, prompt, title, directory, model, agent, system, server: serverParam }) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    if (providedSessionId) {
+      // D-08: reuse path — skip createSession; server/directory/title ignored
+      const sessionEntry = lookupSession(providedSessionId);
+      if (!sessionEntry) {
+        clearTimeout(timer);
+        return {
+          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call prefect_session_list to see active sessions.` }],
+          isError: true,
+        };
+      }
+      try {
+        const serverUrl = sessionEntry.url;
+        const c = getClient(serverUrl);
+        const result = await runPrompt(c, providedSessionId, prompt, { model, agent, system }, undefined, controller.signal);
+        clearTimeout(timer);
+        const diff = await getDiff(c, providedSessionId, undefined, undefined);
+        return { content: [{ type: 'text', text: JSON.stringify({ sessionId: providedSessionId, result, diff }) }] };
+      } catch (err) {
+        clearTimeout(timer);
+        if ((err as Error).name === 'AbortError') {
+          try { await getClient(sessionEntry.url).session.abort({ path: { id: providedSessionId } }); } catch { /* swallow */ }
+          return {
+            content: [{ type: 'text', text: `prefect_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted` }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text', text: String(err) }], isError: true };
+      }
+    }
+
+    // Create-new-session path (existing logic — unchanged)
+    const dir = resolveDirectory(directory);
     let sessionId: string | undefined;
     try {
-      const session = await createSession(client, title, dir);
+      const serverUrl = resolveServerUrl(undefined, serverParam);
+      const serverName = serverNameForUrl(serverUrl, serverParam);
+      const c = getClient(serverUrl);
+      const reg2 = readRegistry();
+      const serverEntry2 = reg2.servers.find((s) => s.name === serverName);
+      const model2 = (serverEntry2?.providerID && serverEntry2?.modelID)
+        ? { providerID: serverEntry2.providerID, modelID: serverEntry2.modelID }
+        : undefined;
+      const session = await createSession(c, title, dir, undefined, serverUrl, serverName, model2, serverEntry2?.maxSessions);
       sessionId = session.id;
-      const result = await runPrompt(client, sessionId, prompt, { model, agent, system }, dir, controller.signal);
+      const result = await runPrompt(c, sessionId, prompt, { model, agent, system }, dir, controller.signal);
       clearTimeout(timer);
-      const diff = await getDiff(client, sessionId, undefined, dir);
+      const diff = await getDiff(c, sessionId, undefined, dir);
       return { content: [{ type: 'text', text: JSON.stringify({ sessionId, result, diff }) }] };
     } catch (err) {
       clearTimeout(timer);
       if ((err as Error).name === 'AbortError') {
         // sessionId may be undefined if abort fired during createSession
         if (sessionId) {
-          await client.session.abort({ path: { id: sessionId } }).catch(() => {});
+          try { await getClient(resolveServerUrl(sessionId)).session.abort({ path: { id: sessionId } }); } catch { /* swallow */ }
         }
         return {
           content: [{ type: 'text', text: `prefect_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}` }],
@@ -683,8 +1040,15 @@ server.registerTool(
   'prefect_dispatch',
   {
     description:
-      'Non-blocking composite: create a session and fire a prompt asynchronously. Returns { sessionId } immediately — the agent runs in the background. Use prefect_await to poll for completion or prefect_inspect to check status.',
+      'Non-blocking composite: fire a prompt asynchronously and return { sessionId } immediately — the agent runs in the background. ' +
+      'When sessionId is provided: reuses that existing session (server/title/directory ignored). ' +
+      'When omitted: creates a new session on the named server (server defaults to first registered or PREFECT_SERVER_URL). ' +
+      'Use prefect_await to poll for completion or prefect_inspect to check status. ' +
+      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use prefect_create_session + prefect_prompt_async directly for those features.',
     inputSchema: z.object({
+      sessionId: z.string().optional().describe(
+        'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
+      ),
       prompt: z.string().describe('The coding task or instruction to execute'),
       title: z.string().optional().describe('Optional display title for the created session'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
@@ -694,13 +1058,64 @@ server.registerTool(
         .describe('Override the model for this call. Both providerID and modelID required together.'),
       agent: z.string().optional().describe('Override the agent for this call.'),
       system: z.string().optional().describe('Override the system prompt for this call.'),
+      server: z.string().min(1).optional().describe(
+        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+      ),
     }),
   },
-  async ({ prompt, title, directory, model, agent, system }) => {
+  async ({ sessionId: providedSessionId, prompt, title, directory, model, agent, system, server: serverParam }) => {
+    if (providedSessionId) {
+      // D-09: reuse path — skip createSession; server/directory/title ignored
+      const sessionEntry = lookupSession(providedSessionId);
+      if (!sessionEntry) {
+        return {
+          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call prefect_session_list to see active sessions.` }],
+          isError: true,
+        };
+      }
+      try {
+        const serverUrl = sessionEntry.url;
+        const { error } = await getClient(serverUrl).session.promptAsync({
+          path: { id: providedSessionId },
+          body: {
+            parts: [{ type: 'text', text: prompt }],
+            ...(model ? { model } : {}),
+            ...(agent ? { agent } : {}),
+            ...(system ? { system } : {}),
+          },
+          // directory ignored in reuse mode per D-09
+        });
+        if (error) {
+          if (isNotFound(error)) {
+            const entry = lookupSession(providedSessionId);
+            removeSession(providedSessionId);
+            throw new Error(
+              `Session ${providedSessionId} not found on server '${entry?.server ?? 'unknown'}' (${entry?.url ?? serverUrl}).\n` +
+              `The session may have been deleted or the server restarted.\n` +
+              `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+            );
+          }
+          throw new Error(JSON.stringify(error));
+        }
+        return { content: [{ type: 'text', text: JSON.stringify({ sessionId: providedSessionId }) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: String(err) }], isError: true };
+      }
+    }
+
+    // Create-new-session path (existing logic — unchanged)
     const dir = resolveDirectory(directory);
     try {
-      const session = await createSession(client, title, dir);
-      const { error } = await client.session.promptAsync({
+      const serverUrl = resolveServerUrl(undefined, serverParam);
+      const serverName = serverNameForUrl(serverUrl, serverParam);
+      const c = getClient(serverUrl);
+      const reg2 = readRegistry();
+      const serverEntry2 = reg2.servers.find((s) => s.name === serverName);
+      const model2 = (serverEntry2?.providerID && serverEntry2?.modelID)
+        ? { providerID: serverEntry2.providerID, modelID: serverEntry2.modelID }
+        : undefined;
+      const session = await createSession(c, title, dir, undefined, serverUrl, serverName, model2, serverEntry2?.maxSessions);
+      const { error } = await c.session.promptAsync({
         path: { id: session.id },
         body: {
           parts: [{ type: 'text', text: prompt }],
@@ -728,18 +1143,32 @@ server.registerTool(
     description:
       'Return a compact snapshot { status, todos, changedFiles } for a session. Faster than fetching full message history. changedFiles contains { file, additions, deletions } — use prefect_get_diff for full patch content.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to inspect'),
+      sessionId: z.string().min(1).describe('Session ID to inspect'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
+      const serverUrl = resolveServerUrl(sessionId);
+      const c = getClient(serverUrl);
       const [statusResult, todoResult, diffResult] = await Promise.all([
-        client.session.status({ query: dir ? { directory: dir } : undefined }),
-        client.session.todo({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
-        client.session.diff({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
+        c.session.status({ query: dir ? { directory: dir } : undefined }),
+        c.session.todo({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
+        c.session.diff({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
       ]);
+      // Stale-session detection: if either todo or diff (the sessionId-bearing calls) returns 404, treat as stale
+      for (const r of [todoResult, diffResult]) {
+        if (r.error && isNotFound(r.error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+      }
       if (statusResult.error) throw new Error(JSON.stringify(statusResult.error));
       if (todoResult.error) throw new Error(JSON.stringify(todoResult.error));
       if (diffResult.error) throw new Error(JSON.stringify(diffResult.error));
@@ -769,7 +1198,7 @@ server.registerTool(
     description:
       'Poll a dispatched session until it reaches idle state, then return { result: { info, parts }, diff }. Use after prefect_dispatch. Accepts pollIntervalMs (default 2000) and timeoutMs (default PREFECT_TIMEOUT_MS).',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID from prefect_dispatch'),
+      sessionId: z.string().min(1).describe('Session ID from prefect_dispatch'),
       pollIntervalMs: z.number().int().positive().optional().describe('Milliseconds between status polls. Default: 2000.'),
       timeoutMs: z.number().int().positive().optional().describe('Maximum milliseconds to wait. Default: PREFECT_TIMEOUT_MS env var (default 120000).'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
@@ -779,9 +1208,10 @@ server.registerTool(
     const dir = resolveDirectory(directory);
     const deadline = Date.now() + timeoutMs;
     try {
+      const serverUrl = resolveServerUrl(sessionId);
       // Poll until idle or timeout
       while (true) {
-        const { data, error } = await client.session.status({ query: dir ? { directory: dir } : undefined });
+        const { data, error } = await getClient(serverUrl).session.status({ query: dir ? { directory: dir } : undefined });
         if (error) throw new Error(JSON.stringify(error));
         const statusEntry = (data as Record<string, { type: string }>)[sessionId];
         // Treat undefined (session not in map) as idle — may have completed before first poll
@@ -795,24 +1225,50 @@ server.registerTool(
         await new Promise<void>((r) => setTimeout(r, pollIntervalMs));
       }
       // Reconstruct result from messages (last assistant message) and full diff
-      const [messagesResult, diffResult] = await Promise.all([
-        client.session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
-        client.session.diff({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
+      const [messagesResult, diff] = await Promise.all([
+        getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
+        getDiff(getClient(serverUrl), sessionId, undefined, dir),
       ]);
-      if (messagesResult.error) throw new Error(JSON.stringify(messagesResult.error));
-      if (diffResult.error) throw new Error(JSON.stringify(diffResult.error));
+      if (messagesResult.error) {
+        if (isNotFound(messagesResult.error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(messagesResult.error));
+      }
       // D-12: find last assistant message — same shape as prefect_run result
       const msgs = messagesResult.data ?? [];
       const last = [...msgs].reverse().find((m) => (m.info as { role?: string }).role === 'assistant');
       if (!last) throw new Error('prefect_await: no assistant message found in session after idle');
-      const validatedParts = PartSchema.array().parse(last.parts);
-      const diff = (diffResult.data ?? []).map((d) => ({
-        ...d,
-        patch: createPatch(d.file, d.before, d.after),
-      }));
+      const awaitParseResult = PartSchema.array().safeParse(last.parts);
+      if (!awaitParseResult.success) {
+        console.error('PartSchema validation warning (prefect_await):', awaitParseResult.error.message);
+      }
+      const validatedParts = awaitParseResult.success ? awaitParseResult.data : (last.parts as unknown[]);
       // D-13: return shape matches prefect_delegate for easy substitution
       return { content: [{ type: 'text', text: JSON.stringify({ result: { info: last.info, parts: validatedParts }, diff }) }] };
     } catch (err) {
+      // D-12 stale-session detection inside the JSON-encoded error string from getDiff
+      if (typeof (err as Error).message === 'string' && (
+        (err as Error).message.includes('"status":404') ||
+        (err as Error).message.includes('"NotFoundError"')
+      )) {
+        const entry = lookupSession(sessionId);
+        removeSession(sessionId);
+        const staleUrl = entry?.url ?? resolveServerUrl();
+        return {
+          content: [{ type: 'text', text:
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+          }], isError: true,
+        };
+      }
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
   }
@@ -830,7 +1286,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.app.agents({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).app.agents({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -858,7 +1315,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.provider.list({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).provider.list({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -888,7 +1346,8 @@ server.registerTool(
     const { query: symbolQuery, directory } = args;
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.find.symbols({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).find.symbols({
         query: { query: symbolQuery, ...(dir ? { directory: dir } : {}) },
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -902,7 +1361,7 @@ server.registerTool(
           path: filePath,
           range: sym.location.range,
         };
-      }).filter((sym) => sym !== null);
+      }).filter((sym): sym is NonNullable<typeof sym> => sym !== null);
       return { content: [{ type: 'text', text: JSON.stringify(mapped) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -916,7 +1375,7 @@ server.registerTool(
   {
     description: 'Trigger summary generation for an OpenCode session. Returns true when the summarization was accepted. providerID and modelID are required — the endpoint has no default fallback. providerID must match a provider configured in the OpenCode server (e.g. "vllm" or "anthropic"); using an unconfigured provider returns ProviderModelNotFoundError.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       providerID: z.string().describe('Required. Provider ID for summarization — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
       modelID: z.string().describe('Required. Model ID for summarization. Must be available under the specified providerID.'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
@@ -925,12 +1384,24 @@ server.registerTool(
   async ({ sessionId, providerID, modelID, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.summarize({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.summarize({
         path: { id: sessionId },
         body: { providerID, modelID },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -944,18 +1415,30 @@ server.registerTool(
   {
     description: 'Get the current todo list for an OpenCode session. Returns Array<{ id, content, status, priority }> where status is one of pending/in_progress/completed/cancelled and priority is high/medium/low.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.todo({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.todo({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -980,9 +1463,11 @@ server.registerTool(
 
 3. force: true always calls the endpoint. OpenCode rewrites AGENTS.md using model judgment — it preserves sections it deems worth keeping and drops others. Custom or hand-authored content can be lost. Returns { existed: <bool>, accepted: true }.
 
-providerID, modelID, and messageID are all required. messageID is the ID assigned to the new user message created by this call — pass any unique string (e.g. a UUID); it is not a reference to an existing message. accepted: true confirms the command was accepted, not that the file was written or changed.`,
+providerID, modelID, and messageID are all required. messageID is the ID assigned to the new user message created by this call — pass any unique string (e.g. a UUID); it is not a reference to an existing message. accepted: true confirms the command was accepted, not that the file was written or changed.
+
+WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status), OpenCode will treat it as absent but the model may still skip writing it — interpreting the git-deleted state as an intentional removal. Before calling, ensure AGENTS.md is either committed (present) or fully removed from both the working tree and git index (git rm --cached AGENTS.md && rm AGENTS.md). A file that is deleted on disk but still tracked will confuse the model.`,
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID'),
+      sessionId: z.string().min(1).describe('Session ID'),
       providerID: z.string().describe('Required. Provider ID — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
       modelID: z.string().describe('Required. Model ID. Must be available under the specified providerID.'),
       messageID: z.string().describe('Required. The ID assigned to the new user message created by this call. Must start with "msg" (e.g. "msg_" + Date.now(), or "msg" + a random suffix). UUID format is rejected. Not a reference to an existing message.'),
@@ -992,23 +1477,52 @@ providerID, modelID, and messageID are all required. messageID is the ID assigne
   },
   async ({ sessionId, providerID, modelID, messageID, directory, force }) => {
     const dir = resolveDirectory(directory);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
       const agentsPath = dir ? path.join(dir, 'AGENTS.md') : null;
 
       if (!force && agentsPath && existsSync(agentsPath)) {
+        clearTimeout(timer);
         const content = readFileSync(agentsPath, 'utf8');
         return { content: [{ type: 'text', text: JSON.stringify({ existed: true, content }) }] };
       }
 
       const existed = agentsPath ? existsSync(agentsPath) : false;
-      const { data, error } = await client.session.init({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.init({
         path: { id: sessionId },
         body: { providerID, modelID, messageID } as { modelID: string; providerID: string; messageID: string },
         query: dir ? { directory: dir } : undefined,
+        signal: controller.signal,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      clearTimeout(timer);
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify({ existed, accepted: data }) }] };
     } catch (err) {
+      clearTimeout(timer);
+      if ((err as Error).name === 'AbortError') {
+        return {
+          content: [{
+            type: 'text',
+            text: `prefect_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
+              `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
+              `Check whether AGENTS.md was created in the project directory anyway.`,
+          }],
+          isError: true,
+        };
+      }
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
   }
@@ -1020,18 +1534,30 @@ server.registerTool(
   {
     description: 'Make an OpenCode session publicly shareable. Returns the full Session object — after sharing, the share URL is available at session.share.url in the returned Session.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to share'),
+      sessionId: z.string().min(1).describe('Session ID to share'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.share({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.share({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1045,18 +1571,30 @@ server.registerTool(
   {
     description: 'Remove public sharing from an OpenCode session. Returns the updated Session object with the share field cleared (session.share will be absent/undefined).',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID to unshare'),
+      sessionId: z.string().min(1).describe('Session ID to unshare'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.unshare({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.unshare({
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1076,7 +1614,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.vcs.get({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).vcs.get({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -1099,7 +1638,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.file.status({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).file.status({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -1122,7 +1662,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.mcp.status({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).mcp.status({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -1137,15 +1678,17 @@ server.registerTool(
 server.registerTool(
   'prefect_get_config',
   {
-    description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. The response may contain API keys or provider credentials — treat as sensitive. Pass directory to scope to a specific project root.',
+    description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. Pass directory to scope to a specific project root. WARNING: response may include sensitive values (API keys, tokens) from the OpenCode config. Do not log or display raw output in shared environments.',
     inputSchema: z.object({
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
+    // NOTE: Response may contain API keys or provider credentials — do not log or cache.
     try {
-      const { data, error } = await client.config.get({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).config.get({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -1168,7 +1711,8 @@ server.registerTool(
   async ({ directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.command.list({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).command.list({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
@@ -1185,7 +1729,7 @@ server.registerTool(
   {
     description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Prefect layer. sessionId, agent, and command are all required. model override is optional.',
     inputSchema: z.object({
-      sessionId: z.string().describe('Session ID in which to execute the command'),
+      sessionId: z.string().min(1).describe('Session ID in which to execute the command'),
       command: z.string().describe('Shell command to execute in the session\'s context'),
       agent: z.string().describe('Required. Agent context for command execution (e.g. "general"). Must match a configured agent name.'),
       model: z.object({
@@ -1198,7 +1742,8 @@ server.registerTool(
   async ({ sessionId, command, agent, model, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.session.shell({
+      const serverUrl = resolveServerUrl(sessionId);
+      const { data, error } = await getClient(serverUrl).session.shell({
         path: { id: sessionId },
         body: {
           agent,
@@ -1207,7 +1752,18 @@ server.registerTool(
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) {
+        if (isNotFound(error)) {
+          const entry = lookupSession(sessionId);
+          removeSession(sessionId);
+          throw new Error(
+            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
+            `The session may have been deleted or the server restarted.\n` +
+            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+          );
+        }
+        throw new Error(JSON.stringify(error));
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1235,22 +1791,29 @@ server.registerTool(
   async ({ name, configType, commandArgs, environment, url, headers, enabled, timeout, directory }) => {
     const dir = resolveDirectory(directory);
     try {
+      if (configType === 'local' && (!commandArgs || commandArgs.length === 0)) {
+        throw new Error('prefect_inject_mcp_server: commandArgs is required when configType is "local"');
+      }
+      if (configType === 'remote' && !url) {
+        throw new Error('prefect_inject_mcp_server: url is required when configType is "remote"');
+      }
       const config: import('@opencode-ai/sdk').McpLocalConfig | import('@opencode-ai/sdk').McpRemoteConfig =
         configType === 'local'
           ? {
               type: 'local',
-              command: commandArgs ?? [],
+              command: commandArgs!,
               ...(environment ? { environment } : {}),
               ...(enabled !== undefined ? { enabled } : {}),
               ...(timeout !== undefined ? { timeout } : {}),
             }
           : {
               type: 'remote',
-              url: url ?? '',
+              url: url!,
               ...(headers ? { headers } : {}),
               ...(enabled !== undefined ? { enabled } : {}),
             };
-      const { data, error } = await client.mcp.add({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).mcp.add({
         body: { name, config },
         query: dir ? { directory: dir } : undefined,
       });
@@ -1276,9 +1839,13 @@ server.registerTool(
   async ({ provider, model, directory }) => {
     const dir = resolveDirectory(directory);
     try {
+      if ((provider && !model) || (!provider && model)) {
+        throw new Error('prefect_list_tools: provider and model must be supplied together; omit both for tool IDs only');
+      }
+      const serverUrl = resolveServerUrl();
       if (provider && model) {
         // GET /experimental/tool — requires BOTH provider + model (non-optional in SDK types)
-        const { data, error } = await client.tool.list({
+        const { data, error } = await getClient(serverUrl).tool.list({
           query: {
             provider,
             model,
@@ -1289,7 +1856,7 @@ server.registerTool(
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } else {
         // GET /experimental/tool/ids — no required params
-        const { data, error } = await client.tool.ids({
+        const { data, error } = await getClient(serverUrl).tool.ids({
           query: dir ? { directory: dir } : undefined,
         });
         if (error) throw new Error(JSON.stringify(error));
@@ -1316,7 +1883,8 @@ server.registerTool(
     const { query: fileQuery, dirs, directory } = args;
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.find.files({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).find.files({
         query: {
           query: fileQuery,
           ...(dirs ? { dirs } : {}),
@@ -1345,7 +1913,8 @@ server.registerTool(
     const { path: filePath, directory } = args;
     const dir = resolveDirectory(directory);
     try {
-      const { data, error } = await client.file.read({
+      const serverUrl = resolveServerUrl();
+      const { data, error } = await getClient(serverUrl).file.read({
         query: {
           path: filePath,
           ...(dir ? { directory: dir } : {}),

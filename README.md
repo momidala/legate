@@ -46,7 +46,7 @@ A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code
 | `prefect_session_command` | Run a slash command inside a session (e.g. `compact`) |
 | `prefect_session_summarize` | Trigger summary generation for a session |
 | `prefect_session_todo` | Get the current todo list for a session |
-| `prefect_session_init` | Initialize AGENTS.md for a session's project |
+| `prefect_session_init` | Initialize AGENTS.md for a session's project (**Note:** if AGENTS.md is staged for deletion in git (`D` in `git status`), the model may skip writing it — treating the git-deleted state as intentional. Ensure the file is either committed and present, or fully removed from both working tree and git index before calling.) |
 | `prefect_session_share` | Make a session publicly shareable |
 | `prefect_session_unshare` | Remove public sharing from a session |
 | `prefect_session_shell` | Execute an arbitrary shell command in a session's working directory |
@@ -60,7 +60,7 @@ A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code
 | `prefect_list_mcp_servers` | List MCP servers configured in the OpenCode instance |
 | `prefect_list_commands` | List available slash commands |
 | `prefect_list_tools` | List tools available in the OpenCode instance |
-| `prefect_find_symbol` | Search workspace for symbols matching a query |
+| `prefect_find_symbol` | Search workspace for symbols matching a query (**EXPERIMENTAL** — returns `[]` in OpenCode ≤ 1.14.33; `workspace/symbol` LSP requests not yet implemented. Requires `"lsp": true` in `opencode.json` and `typescript-language-server` installed globally when it does work.) |
 | `prefect_find_file` | Find files matching a query string |
 | `prefect_get_file_content` | Read a file from the OpenCode workspace |
 | `prefect_get_config` | Get the full OpenCode configuration object |
@@ -95,8 +95,7 @@ prefect init
     "prefect": {
       "type": "stdio",
       "command": "prefect-mcp",
-      "args": [],
-      "env": {}
+      "args": []
     }
   }
 }
@@ -123,8 +122,7 @@ cd /your/project
     "prefect": {
       "type": "stdio",
       "command": "node",
-      "args": ["/abs/path/to/prefect-mcp/build/index.js"],
-      "env": {}
+      "args": ["/abs/path/to/prefect-mcp/build/index.js"]
     }
   }
 }
@@ -132,7 +130,7 @@ cd /your/project
 
 ## Prerequisites
 
-- **Node.js >= 18** (tested on Node 20). `node --version` to check.
+- **Node.js >= 20**. `node --version` to check.
 - **OpenCode CLI >= 1.14**. Install: `curl -fsSL https://opencode.ai/install | bash`. Verify: `opencode --version`.
 - **Claude Code CLI**. Verify: `claude --version`.
 - A model endpoint OpenCode can talk to (vllm, Ollama, OpenAI-compatible, etc.). Configured in `~/.config/opencode/opencode.json`.

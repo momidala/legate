@@ -55,3 +55,25 @@ git commit -m "chore: remove validation artifact"
 ```
 
 Or keep it as a permanent example of OpenCode-generated output.
+
+## Multi-Pass Delegation with sessionId
+
+Once you have a `SESSION_ID` from a previous `prefect_delegate` or `prefect_create_session` call, you can run follow-up prompts against the same session without creating a new one:
+
+```
+prefect_delegate({ sessionId: SESSION_ID, prompt: "Now add a test for the greet function" })
+```
+
+In reuse mode:
+- `server`, `title`, and `directory` are ignored — the session already has these.
+- `model`, `agent`, and `system` still apply as per-prompt overrides.
+- The response shape is identical: `{ sessionId, result, diff }`.
+- On timeout, the session is **not** aborted — the caller owns it.
+
+Similarly for `prefect_dispatch` — passing `sessionId` fires a background prompt on an existing session:
+
+```
+prefect_dispatch({ sessionId: SESSION_ID, prompt: "Run the tests and fix any failures" })
+```
+
+Use `prefect_await` or `prefect_inspect` to track progress as before.

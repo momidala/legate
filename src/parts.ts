@@ -78,7 +78,7 @@ export const ToolStateCompletedSchema = z.object({
     end: z.number(),
     compacted: z.number().optional(),
   }),
-  attachments: z.array(z.lazy(() => FilePartSchema)).optional(),
+  attachments: z.array(FilePartSchema).optional(),
 });
 
 export const ToolStateErrorSchema = z.object({

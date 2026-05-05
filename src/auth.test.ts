@@ -1,6 +1,8 @@
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAuthHeader, authFetch } from './auth.js';
+import { buildAuthHeader, authFetch, _resetWarnFlags } from './auth.js';
+
+beforeEach(() => _resetWarnFlags());
 
 // ── buildAuthHeader tests ───────────────────────────────────────────────────
 

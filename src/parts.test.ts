@@ -4,11 +4,6 @@ import {
   PartSchema,
   ToolStateSchema,
   ApiErrorSchema,
-  TextPartSchema,
-  FilePartSchema,
-  ToolPartSchema,
-  StepFinishPartSchema,
-  RetryPartSchema,
 } from './parts.js';
 
 const BASE = { id: 'p_01', sessionID: 'ses_01', messageID: 'msg_01' };

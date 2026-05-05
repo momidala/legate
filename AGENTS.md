@@ -1,16 +1,59 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This is the Prefect MCP server — a TypeScript project that exposes OpenCode's HTTP API as Claude Code tools.
 
-## Quick Reference
+## Core Workflow
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+1. **CREATE SESSION** - `prefect_create_session` with explicit `directory` parameter
+2. **RUN PROMPT** - `prefect_run` with task description  
+3. **GET DIFF** - `prefect_get_diff` to see changes
+4. **REVIEW & TEST** - Check diff and run project tests/build
+5. **DECIDE** - Commit if good, correct if needed, or fork/abort as appropriate
+
+## Key Commands & Patterns
+
+### Development Setup
+- `npm install` - Install dependencies
+- `npm run build` - Compile TypeScript to build/ directory (required for Claude Code)
+- `npm run test` - Run all tests
+
+### Configuration
+- `PREFECT_SERVER_URL` (default: `http://localhost:4096`) - OpenCode API endpoint
+- `PREFECT_TIMEOUT_MS` (default: 120000) - Timeout for `prefect_run`
+- `PREFECT_DEFAULT_PROJECT` - Working directory for auto-started OpenCode instances
+
+### Critical Constraints
+- **Always pass `directory` explicitly** to all tools - never rely on defaults
+- **Build is required** - The `build/` directory must exist for Claude Code to work
+- **All changes land in working tree** - Git is the safety net, not OpenCode
+
+### Testing
+- Test with `npm run test` (runs all test files in build/)
+- Run individual tests with `node build/<test-file>.js`
+- Validate with `examples/test-task.md` end-to-end test
+
+### Environment Setup
+- Node.js >= 20 (per package.json engines)
+- OpenCode CLI >= 1.14
+- Claude Code CLI
+- Local model endpoint configured in `~/.config/opencode/opencode.json`
+
+### Repository Structure
 ```
+.
+├── src/                 # TypeScript source
+├── build/               # Compiled output (gitignored)
+├── .mcp.json            # Claude Code registration
+├── package.json         # Dependencies, scripts
+└── CLAUDE.md            # Claude Code workflow instructions
+```
+
+## Important Notes
+
+- **Never modify the build/ directory directly** - always rebuild from src/
+- **All OpenCode sessions run in the current working directory** - not in a sandbox
+- **Git is the safety net** - use `git checkout -- .` to reset if needed
+- **Tools require OpenCode to be running** - check with `curl http://localhost:4096/global/health`
 
 ## Non-Interactive Shell Commands
 
@@ -29,32 +72,6 @@ rm -f file                  # NOT: rm file
 rm -rf directory            # NOT: rm -r directory
 cp -rf source dest          # NOT: cp -r source dest
 ```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
 ## Session Completion
 
@@ -81,4 +98,3 @@ bd close <id>         # Complete work
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->

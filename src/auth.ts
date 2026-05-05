@@ -63,3 +63,9 @@ export async function authFetch(request: Request): Promise<Response> {
   const authed = new Request(request, { headers: merged });
   return globalThis.fetch(authed);
 }
+
+/** @internal — test use only */
+export function _resetWarnFlags(): void {
+  warnedPassword = false;
+  warnedUsername = false;
+}
