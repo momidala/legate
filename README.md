@@ -82,7 +82,7 @@ Also included:
 ### Option 1: Global install (recommended)
 
 ```bash
-npm install -g prefect-mcp
+npm install -g @momidala/prefect
 cd /your/project
 prefect init
 ```
@@ -106,15 +106,15 @@ Use `prefect init --force` to overwrite an existing `prefect` entry.
 ### Option 2: Local clone (development / contributing)
 
 ```bash
-git clone https://github.com/barchett/prefect-mcp.git
-cd prefect-mcp
+git clone https://github.com/momidala/prefect.git
+cd prefect
 npm install
 npm run build
 cd /your/project
-/path/to/prefect-mcp/build/cli.js init
+/path/to/prefect/build/cli.js init
 ```
 
-`prefect init` (run from a local clone) detects the absence of the `node_modules/prefect-mcp/` path segment and writes:
+`prefect init` (run from a local clone) detects the absence of the `node_modules/@momidala/prefect/` path segment and writes:
 
 ```json
 {
@@ -122,7 +122,7 @@ cd /your/project
     "prefect": {
       "type": "stdio",
       "command": "node",
-      "args": ["/abs/path/to/prefect-mcp/build/index.js"]
+      "args": ["/abs/path/to/prefect/build/index.js"]
     }
   }
 }
@@ -140,8 +140,8 @@ cd /your/project
 ### 1. Clone and build the MCP server
 
 ```bash
-git clone https://github.com/barchett/prefect-mcp.git
-cd prefect-mcp
+git clone https://github.com/momidala/prefect.git
+cd prefect
 npm install
 npm run build
 ```
