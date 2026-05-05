@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "prefect": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "build/index.js"
+      ],
+      "env": {}
+    }
+  }
+}

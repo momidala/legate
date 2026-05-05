@@ -1,0 +1,30 @@
+{
+  "name": "@lbarchett/prefect-mcp",
+  "version": "1.1.1",
+  "type": "module",
+  "description": "TypeScript MCP server that exposes OpenCode's HTTP API as Claude Code tools",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "files": ["build/", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/barchett/prefect-mcp.git" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js build/cli.js",
+    "test": "tsc && node --test build/parts.test.js build/cli.test.js build/auth.test.js build/diff-patch.test.js build/session-command.test.js build/autostart.test.js"
+  },
+  "bin": {
+    "prefect": "./build/cli.js",
+    "prefect-mcp": "./build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@opencode-ai/sdk": "1.14.25",
+    "diff": "^7.0.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "latest",
+    "typescript": "6.0.3"
+  }
+}
