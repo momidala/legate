@@ -45,7 +45,7 @@ Plans:
   5. After a successful update, the command outputs a reminder to restart Claude Code
 **Plans:** 2 plans
 Plans:
-- [ ] 02-01-PLAN.md — Add install-command and uninstall-command CLI subcommands (with inline /prefect-update template) plus tests
+- [x] 02-01-PLAN.md — Add install-command and uninstall-command CLI subcommands (with inline /prefect-update template) plus tests
 - [ ] 02-02-PLAN.md — Wire postinstall and preuninstall lifecycle hooks in package.json
 
 
