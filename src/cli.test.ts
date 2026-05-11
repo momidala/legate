@@ -437,3 +437,148 @@ test('MULTI-09: init silent when servers already registered', () => {
     assert.doesNotMatch(stderr, /No servers registered yet/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// SELFUP-01..SELFUP-05: install-command and uninstall-command lifecycle tests
+
+// Helper: spawn cli.js from a fake global install path so isGlobal===true.
+// Copies the entire build/ dir into <tmp>/node_modules/@momidala/prefect/build/
+// and writes a stub package.json so module resolution works.
+function runCliAsGlobal(homeDir: string, ...args: string[]):
+  { status: number; stdout: string; stderr: string } {
+  const fakeGlobalRoot = join(homeDir, 'node_modules', '@momidala', 'prefect');
+  const fakeBuildDir = join(fakeGlobalRoot, 'build');
+  mkdirSync(fakeBuildDir, { recursive: true });
+  // Copy all build artifacts so imports resolve
+  const srcBuildDir = resolve(process.cwd(), 'build');
+  const buildFiles = ['cli.js', 'registry.js'];
+  for (const f of buildFiles) {
+    const srcPath = join(srcBuildDir, f);
+    if (existsSync(srcPath)) {
+      writeFileSync(join(fakeBuildDir, f), readFileSync(srcPath, 'utf8'));
+    }
+  }
+  // Stub package.json at the fake root (cli.js reads ../package.json for version)
+  writeFileSync(join(fakeGlobalRoot, 'package.json'), JSON.stringify({ name: '@momidala/prefect', version: '0.0.0-test' }));
+  const fakeCli = join(fakeBuildDir, 'cli.js');
+  const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+  const res = spawnSync('node', [fakeCli, ...args], { cwd: homeDir, encoding: 'utf8', env });
+  return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
+}
+
+test('SELFUP: install-command silent-skips when not global (exit 0, no file, no stderr)', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status, stdout, stderr } = runCli(dir, env, 'install-command');
+    assert.equal(status, 0);
+    assert.equal(stdout, '');
+    assert.equal(stderr, '');
+    assert.equal(existsSync(join(dir, '.claude', 'commands', 'prefect-update.md')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP: uninstall-command silent-skips when not global (exit 0, no stderr)', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status, stdout, stderr } = runCli(dir, env, 'uninstall-command');
+    assert.equal(status, 0);
+    assert.equal(stdout, '');
+    assert.equal(stderr, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP-01: install-command writes ~/.claude/commands/prefect-update.md when global', () => {
+  const dir = freshTmp();
+  try {
+    const { status, stderr } = runCliAsGlobal(dir, 'install-command');
+    assert.equal(status, 0, `expected exit 0, got ${status}, stderr: ${stderr}`);
+    const dest = join(dir, '.claude', 'commands', 'prefect-update.md');
+    assert.ok(existsSync(dest), 'prefect-update.md must be written');
+    const content = readFileSync(dest, 'utf8');
+    // SELFUP-03: update command embedded
+    assert.match(content, /npm install -g @momidala\/prefect@latest/);
+    // SELFUP-04: new version display embedded
+    assert.match(content, /prefect updated to v/);
+    // SELFUP-05: restart reminder embedded
+    assert.match(content, /Restart Claude Code to apply\./);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP-01: install-command creates ~/.claude/commands/ if missing (mkdir -p)', () => {
+  const dir = freshTmp();
+  try {
+    // Confirm ~/.claude/commands/ does NOT exist before
+    assert.equal(existsSync(join(dir, '.claude')), false);
+    const { status } = runCliAsGlobal(dir, 'install-command');
+    assert.equal(status, 0);
+    assert.ok(existsSync(join(dir, '.claude', 'commands')), 'directory must be created');
+    assert.ok(existsSync(join(dir, '.claude', 'commands', 'prefect-update.md')), 'file must be written');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP-02: uninstall-command removes ~/.claude/commands/prefect-update.md when present', () => {
+  const dir = freshTmp();
+  try {
+    // First install
+    runCliAsGlobal(dir, 'install-command');
+    const dest = join(dir, '.claude', 'commands', 'prefect-update.md');
+    assert.ok(existsSync(dest), 'precondition: file must exist after install');
+    // Then uninstall
+    const { status, stderr } = runCliAsGlobal(dir, 'uninstall-command');
+    assert.equal(status, 0);
+    assert.equal(stderr, '');
+    assert.equal(existsSync(dest), false, 'file must be removed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP-02: uninstall-command exits 0 silently when file is absent', () => {
+  const dir = freshTmp();
+  try {
+    // File never installed
+    const { status, stdout, stderr } = runCliAsGlobal(dir, 'uninstall-command');
+    assert.equal(status, 0);
+    assert.equal(stdout, '');
+    assert.equal(stderr, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP: install-command warns to stderr and exits 0 when mkdir/write fails', () => {
+  const dir = freshTmp();
+  try {
+    // Block ~/.claude/commands/ creation by placing a regular file at ~/.claude
+    // mkdirSync(...,{recursive:true}) will throw ENOTDIR/EEXIST when a non-dir
+    // exists at the path.
+    writeFileSync(join(dir, '.claude'), 'i am a file not a directory');
+    const { status, stderr } = runCliAsGlobal(dir, 'install-command');
+    assert.equal(status, 0, 'D-07: must exit 0 even on failure');
+    assert.match(stderr, /Warning: prefect-update command not installed —/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SELFUP: prefect bogus usage lists install-command and uninstall-command', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status, stderr } = runCli(dir, env, 'bogus');
+    assert.equal(status, 1);
+    assert.match(stderr, /install-command\s+Install \/prefect-update Claude command/);
+    assert.match(stderr, /uninstall-command\s+Remove \/prefect-update Claude command/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
