@@ -43,7 +43,11 @@ Plans:
   3. Running `/prefect-update` inside Claude Code executes `npm update -g @momidala/prefect` (or equivalent) and completes without error
   4. After a successful update, the new version number is displayed in the Claude Code chat
   5. After a successful update, the command outputs a reminder to restart Claude Code
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 02-01-PLAN.md — Add install-command and uninstall-command CLI subcommands (with inline /prefect-update template) plus tests
+- [ ] 02-02-PLAN.md — Wire postinstall and preuninstall lifecycle hooks in package.json
+
 
 ### Phase 3: Checkpoint Schemas + Delivery
 **Goal**: Prefect agents automatically write `checkpoint.md` after each file-modifying tool call, following a defined schema; `Handoff.md` schema is also defined; instructions are wired via the delivery mechanism found in Phase 1
