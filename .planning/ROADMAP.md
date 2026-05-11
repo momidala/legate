@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Findings are recorded in `.planning/research/` so Phase 3 and Phase 4 implementers need no re-investigation
 **Plans:** 1 plan
 Plans:
-- [ ] 01-01-PLAN.md — Audit findings doc for D-07/D-08 compliance; wire decisions into PROJECT.md and ROADMAP.md
+- [x] 01-01-PLAN.md — Audit findings doc for D-07/D-08 compliance; wire decisions into PROJECT.md and ROADMAP.md
 
 ### Phase 2: Self-Update
 **Goal**: Users who install `@momidala/prefect` globally get the `/prefect-update` Claude command automatically, can run it to upgrade prefect, and are told to restart Claude Code afterward
@@ -77,7 +77,7 @@ Phase 2 is independent of all others. Phase 3 depends on Phase 1 (delivery mecha
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Context API Research | 0/1 | Not started | - |
+| 1. Context API Research | 1/1 | Complete | 2026-05-11 |
 | 2. Self-Update | 0/TBD | Not started | - |
 | 3. Checkpoint Schemas + AGENTS.md | 0/TBD | Not started | - |
 | 4. Handoff Trigger | 0/TBD | Not started | - |
