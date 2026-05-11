@@ -12,7 +12,7 @@ A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_create_session` | Start a new coding session |
+| `prefect_create_session` | Start a new coding session (optional `server` param selects a named server from the registry) |
 | `prefect_run` | Send a prompt, block until the agent finishes |
 | `prefect_get_diff` | Inspect what OpenCode changed |
 | `prefect_fork` | Fork a session at a safe point (escape hatch for off-rails sessions) |
@@ -24,8 +24,8 @@ A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_delegate` | Blocking: create session + run prompt + return diff in one call |
-| `prefect_dispatch` | Non-blocking: create session + fire prompt, returns `sessionId` immediately |
+| `prefect_delegate` | Blocking: create session + run prompt + return diff in one call (optional `server` param) |
+| `prefect_dispatch` | Non-blocking: create session + fire prompt, returns `sessionId` immediately (optional `server` param) |
 | `prefect_await` | Poll a dispatched session until idle, then return result + diff |
 | `prefect_inspect` | Compact snapshot `{ status, todos, changedFiles }` — faster than full message fetch |
 | `prefect_prompt_async` | Fire a prompt to an existing session without blocking |
@@ -208,6 +208,8 @@ Adjust the provider key (`vllm`) and path if you use Ollama, OpenAI, etc.
 
 Prefect auto-starts OpenCode on the first tool call if it isn't already running, so this step is optional for most setups. Auto-start spawns `opencode serve --port <N>` where `<N>` is the port from `PREFECT_SERVER_URL` (default 4096). The process is spawned in `PREFECT_DEFAULT_PROJECT` if set, otherwise in Prefect's own working directory.
 
+For **multi-server setups**, start each OpenCode instance manually on its own port, then register each one with `prefect add-server` (see [Multi-Server Registry](#multi-server-registry)). Auto-start only manages the single `PREFECT_SERVER_URL` server.
+
 > **Auto-start only works when `PREFECT_SERVER_URL` is local** (`localhost` or `127.0.0.1`). If `PREFECT_SERVER_URL` points to a remote host (e.g. a Windows host IP from WSL2), auto-start will spawn a local process that cannot satisfy the remote health check and will time out. Start OpenCode manually on the remote machine instead.
 
 If you prefer to manage the process yourself, start it manually **from your project root** in a dedicated terminal:
@@ -255,7 +257,7 @@ With everything wired up, follow `examples/test-task.md` to confirm the full cre
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
-| `PREFECT_SERVER_URL` | `http://localhost:4096` | Base URL for OpenCode API; port is also used when auto-starting (`opencode serve --port <N>`) |
+| `PREFECT_SERVER_URL` | `http://localhost:4096` | Fallback OpenCode URL when the server registry is empty; port is also used when auto-starting (`opencode serve --port <N>`) |
 | `PREFECT_TIMEOUT_MS` | `120000` | Max wait for `prefect_run` to return (ms) |
 | `PREFECT_AUTOSTART_TIMEOUT_MS` | `30000` | Max wait for OpenCode to become healthy after auto-start spawn (ms) |
 | `PREFECT_DEFAULT_PROJECT` | _(unset)_ | Working directory passed to `opencode serve` on auto-start; defaults to Prefect's own cwd |
@@ -280,9 +282,77 @@ To override per-project, edit the `env` field of `.mcp.json`:
 }
 ```
 
+## Multi-Server Registry
+
+Prefect can route sessions to multiple named OpenCode instances. This is useful when you want to run different models on different machines, or cap how many concurrent sessions each server accepts.
+
+### How it works
+
+Registered servers are stored in `~/.config/prefect/servers.json`. When you call `prefect_create_session`, Prefect picks the server using this fallback chain:
+
+1. `server` param (named server from registry) — explicit choice
+2. First entry in the registry — default when no name is given
+3. `PREFECT_SERVER_URL` — fallback when the registry is empty
+
+Sessions remember which server they belong to (stored in `~/.config/prefect/sessions.json`), so every subsequent tool call (`prefect_run`, `prefect_get_diff`, etc.) routes automatically to the right server without you passing any extra arguments.
+
+### CLI commands
+
+```bash
+# Register a server
+prefect add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]
+
+# Examples
+prefect add-server local  localhost 4096 vllm   qwen2.5-coder
+prefect add-server remote 10.0.0.5  4096 ollama codestral     --max-sessions 3
+
+# List registered servers
+prefect list-servers
+
+# Remove a server
+prefect remove-server <name>
+```
+
+`add-server` and `remove-server` also update an `## Available Workers` section in your project's `CLAUDE.md` so Claude Code always has an up-to-date list of available servers.
+
+### Capacity management (`--max-sessions`)
+
+When `--max-sessions <n>` is set for a server, Prefect enforces a hard cap on concurrent sessions for that server. If the cap is reached, `prefect_create_session` returns an error telling you to delete an existing session or choose a different server.
+
+The cap is enforced atomically via a file lock on `sessions.json`, so concurrent Claude Code instances cannot both pass the gate.
+
+On each capacity check, Prefect also verifies that existing sessions are still live by calling `GET /session/:id` on the server. Sessions that return non-200 (e.g. after an OpenCode restart) are pruned from `sessions.json` automatically before the count is evaluated.
+
+### Selecting a server per session
+
+Pass the `server` argument to `prefect_create_session`:
+
+```
+prefect_create_session({ title: "my task", server: "remote", directory: "/path/to/project" })
+```
+
+Omit `server` to use the first registered server. Claude Code reads the `## Available Workers` section in `CLAUDE.md` to know which names are available.
+
+## Session Lifecycle
+
+Active sessions are tracked in `~/.config/prefect/sessions.json`. Each entry records the session ID, which server it belongs to, and when it was created.
+
+**Always call `prefect_session_delete` when a session's work is complete.** Sessions that are not explicitly deleted:
+- Count against the server's `maxSessions` capacity cap
+- Accumulate in `sessions.json` indefinitely
+
+Two automatic cleanup mechanisms bound the worst-case growth:
+
+| Mechanism | Trigger | What it removes |
+|-----------|---------|-----------------|
+| **TTL pruning** | Every `readSessionMap` call | Entries older than `PREFECT_SESSION_TTL_MS` (default 24 h) |
+| **Liveness check** | Every `prefect_create_session` call (when `maxSessions` is set) | Entries whose server returns non-200 on `GET /session/:id` |
+
+These are safety nets, not a substitute for explicit deletion.
+
 ## Day-to-Day Use
 
-See `CLAUDE.md` for the canonical create -> run -> diff -> test -> correct loop. Claude Code reads `CLAUDE.md` automatically at session start, so you don't need to repeat the instructions.
+See `CLAUDE.md` for the canonical create -> run -> diff -> test -> correct -> delete loop. Claude Code reads `CLAUDE.md` automatically at session start, so you don't need to repeat the instructions.
 
 ## WSL Note
 
