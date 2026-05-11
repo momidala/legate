@@ -23,6 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: A concrete, documented decision on (a) how prefect agents receive checkpoint instructions, and (b) how/whether an OpenCode agent can detect ~80% context utilization to trigger Handoff.md
 **Depends on**: Nothing (first phase)
 **Requirements**: CKPT-05
+**Findings**: `.planning/research/phase-1-findings.md` (self-contained Q&A; Phase 3/4 read this — not CONTEXT.md or RESEARCH.md)
 **Success Criteria** (what must be TRUE):
   1. Research finding answers: what mechanism can deliver persistent instructions to prefect agents (OpenCode session system prompt, per-run pre-prompt, OpenCode Agent.md, or other)?
   2. Research finding answers: does OpenCode expose context utilization % to its own agents via any accessible API or event?
@@ -47,6 +48,7 @@ Plans:
 ### Phase 3: Checkpoint Schemas + Delivery
 **Goal**: Prefect agents automatically write `checkpoint.md` after each file-modifying tool call, following a defined schema; `Handoff.md` schema is also defined; instructions are wired via the delivery mechanism found in Phase 1
 **Depends on**: Phase 1 (delivery mechanism)
+**Findings (Phase 1 → Phase 3 inputs)**: `.planning/research/phase-1-findings.md` — Finding 1 (AGENTS.md auto-load), Finding 2 (no session-level system prompt), Finding 3 (per-run `system` backup), Canonical AGENTS.md Checkpoint Instruction Template
 **Requirements**: CKPT-01, CKPT-02, CKPT-04
 **Success Criteria** (what must be TRUE):
   1. Checkpoint instructions are delivered to prefect agents via the mechanism identified in Phase 1 (session system prompt, pre-prompt, OpenCode Agent.md, or other)
@@ -58,6 +60,7 @@ Plans:
 ### Phase 4: Handoff Trigger
 **Goal**: When a prefect agent's context reaches ~80%, the agent writes `Handoff.md` and stops work, using the trigger mechanism identified in Phase 1
 **Depends on**: Phase 1 (trigger design), Phase 3 (Handoff.md schema and delivery wiring)
+**Findings (Phase 1 → Phase 4 inputs)**: `.planning/research/phase-1-findings.md` — Finding 4 (context % NOT visible to agent), Trigger Design Summary (instructed self-detection per D-02), Open Question (per-run `system` vs AGENTS.md interaction — test at implementation time)
 **Requirements**: CKPT-03
 **Success Criteria** (what must be TRUE):
   1. The delivery mechanism (from Phase 1/3) causes a prefect agent to write `Handoff.md` at approximately 80% context utilization
