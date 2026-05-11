@@ -14,7 +14,7 @@ Claude Code can delegate coding work to local models and review the result — k
 
 **Target features:**
 - Self-update mechanism (npm lifecycle hooks + `/prefect-update` Claude command)
-- Automatic checkpointing via AGENTS.md pre-prompt (after each file modification; Handoff.md at ~80% context)
+- Automatic checkpointing for prefect agents (after each file modification; Handoff.md at ~80% agent context)
 
 ## Requirements
 
@@ -31,8 +31,8 @@ Claude Code can delegate coding work to local models and review the result — k
 
 - [ ] npm postinstall/preuninstall hooks install and remove `/prefect-update` Claude command
 - [ ] `/prefect-update` command updates package, verifies version, prompts restart
-- [ ] AGENTS.md pre-prompt instructs checkpointing after each file-modifying tool call
-- [ ] Handoff.md written when context reaches ~80% (implementation TBD pending research)
+- [ ] Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism TBD pending Phase 1 research)
+- [ ] Handoff.md written by prefect agent when its context reaches ~80% (trigger mechanism TBD pending Phase 1 research)
 
 ### Out of Scope
 
@@ -44,8 +44,8 @@ Claude Code can delegate coding work to local models and review the result — k
 
 - TypeScript ESM project with a strict test suite (95+ tests via Node's built-in test runner)
 - Published to npm as a public scoped package; users install globally with `npm install -g @momidala/prefect`
-- AGENTS.md already exists in the repo and is committed; adding checkpoint instructions there means all Claude Code sessions pick them up automatically
-- OpenCode context utilization API: unknown — needs research before implementing the 80% cutoff trigger
+- Checkpoint instructions must be delivered to prefect agents (OpenCode agents), not to Claude Code — the delivery mechanism (session system prompt, per-run pre-prompt, OpenCode Agent.md, etc.) is unknown and is the subject of Phase 1 research
+- OpenCode context utilization API: unknown — needs research before implementing the 80% cutoff trigger for prefect agents
 
 ## Constraints
 

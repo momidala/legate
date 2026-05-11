@@ -17,11 +17,11 @@ Requirements for the Developer Experience milestone.
 
 ### Checkpointing (CKPT)
 
-- [ ] **CKPT-01**: AGENTS.md contains instructions directing Claude to write `checkpoint.md` after each file-modifying tool call
+- [ ] **CKPT-01**: Prefect agents (OpenCode agents spawned via `prefect_run`) receive checkpoint instructions and write `checkpoint.md` after each file-modifying tool call (delivery mechanism: researched in CKPT-05)
 - [ ] **CKPT-02**: `checkpoint.md` follows a defined schema (current task, last change, remaining steps, status)
-- [ ] **CKPT-03**: When context reaches ~80%, Claude writes `Handoff.md` and stops work
+- [ ] **CKPT-03**: When a prefect agent's context reaches ~80%, the agent writes `Handoff.md` and stops work (trigger mechanism: researched in CKPT-05)
 - [ ] **CKPT-04**: `Handoff.md` follows a defined schema (accomplished, current state, next steps, open questions)
-- [ ] **CKPT-05**: Research spike resolves whether Claude Code/OpenCode exposes context utilization % and produces a concrete trigger design
+- [ ] **CKPT-05**: Research spike resolves (a) whether OpenCode exposes context utilization % to its own agents, and (b) how checkpoint instructions can be delivered to prefect agents (session system prompt, per-run pre-prompt, OpenCode Agent.md, etc.)
 
 ## Future Requirements
 
@@ -44,26 +44,24 @@ Deferred to a future release.
 
 ## Traceability
 
-Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SELFUP-01 | — | Pending |
-| SELFUP-02 | — | Pending |
-| SELFUP-03 | — | Pending |
-| SELFUP-04 | — | Pending |
-| SELFUP-05 | — | Pending |
-| CKPT-01 | — | Pending |
-| CKPT-02 | — | Pending |
-| CKPT-03 | — | Pending |
-| CKPT-04 | — | Pending |
-| CKPT-05 | — | Pending |
+| CKPT-05 | Phase 1 | Pending |
+| SELFUP-01 | Phase 2 | Pending |
+| SELFUP-02 | Phase 2 | Pending |
+| SELFUP-03 | Phase 2 | Pending |
+| SELFUP-04 | Phase 2 | Pending |
+| SELFUP-05 | Phase 2 | Pending |
+| CKPT-01 | Phase 3 | Pending |
+| CKPT-02 | Phase 3 | Pending |
+| CKPT-04 | Phase 3 | Pending |
+| CKPT-03 | Phase 4 | Pending |
 
 **Coverage:**
 - v2.1 requirements: 10 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 10 ⚠️
+- Mapped to phases: 10
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-11*
-*Last updated: 2026-05-11 — initial definition*
+*Last updated: 2026-05-11 — roadmap created, all 10 requirements mapped*

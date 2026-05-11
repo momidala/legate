@@ -1,20 +1,62 @@
-# State
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-05-11)
+
+**Core value:** Claude Code can delegate coding work to local models and review the result — keeping the orchestration context clean while local compute handles the edits.
+**Current focus:** Phase 1 — Context API Research
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-05-11 — Milestone v2.1 started
+Phase: 1 of 4 (Context API Research)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-05-11 — Roadmap created; all 10 v2.1 requirements mapped across 4 phases
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: —
+- Total execution time: 0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
-- Multi-server registry and session lifecycle are stable; test suite covers them well
-- Race condition fixes (stale-busy) committed in v2.0.3; the "stuck-busy escape hatch" in prefect_await is the key mitigation
-- `prefect version` command shipped in v2.0.4 (was originally planned for v3.0)
-- AGENTS.md exists and is committed — safe to add checkpoint instructions
-- OpenCode context utilization API status is unknown; needs research before implementing the 80% cutoff
+### Decisions
 
-## Blockers
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
 
-- None currently
+- Roadmap: Phase 2 (SELFUP) and Phase 3 (CKPT schemas) are independent — can execute in either order after Phase 1 research is done
+- Roadmap: Phase 4 (Handoff trigger) is gated on both Phase 1 (trigger API) and Phase 3 (Handoff.md schema)
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+- OpenCode context utilization API is unknown — Phase 1 research spike must complete before Phase 4 can be planned
+
+## Deferred Items
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| *(none)* | | | |
+
+## Session Continuity
+
+Last session: 2026-05-11
+Stopped at: Roadmap written; next step is `/gsd-plan-phase 1`
+Resume file: None
