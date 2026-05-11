@@ -31,8 +31,8 @@ Claude Code can delegate coding work to local models and review the result — k
 
 - [ ] npm postinstall/preuninstall hooks install and remove `/prefect-update` Claude command
 - [ ] `/prefect-update` command updates package, verifies version, prompts restart
-- [ ] Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism TBD pending Phase 1 research)
-- [ ] Handoff.md written by prefect agent when its context reaches ~80% (trigger mechanism TBD pending Phase 1 research)
+- [ ] Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism: AGENTS.md auto-load — see `.planning/research/phase-1-findings.md` Finding 1)
+- [ ] Handoff.md written by prefect agent when context pressure is sensed (trigger mechanism: instructed self-detection — OpenCode does not expose context % to agents; see `.planning/research/phase-1-findings.md` Finding 4)
 
 ### Out of Scope
 
@@ -44,8 +44,8 @@ Claude Code can delegate coding work to local models and review the result — k
 
 - TypeScript ESM project with a strict test suite (95+ tests via Node's built-in test runner)
 - Published to npm as a public scoped package; users install globally with `npm install -g @momidala/prefect`
-- Checkpoint instructions must be delivered to prefect agents (OpenCode agents), not to Claude Code — the delivery mechanism (session system prompt, per-run pre-prompt, OpenCode Agent.md, etc.) is unknown and is the subject of Phase 1 research
-- OpenCode context utilization API: unknown — needs research before implementing the 80% cutoff trigger for prefect agents
+- Checkpoint instructions are delivered to prefect agents via AGENTS.md auto-load in the working directory (Phase 1 research finding). Per-run `system` field in `prefect_run` is a confirmed backup mechanism. Session-level system prompt at creation is NOT supported. See `.planning/research/phase-1-findings.md`.
+- OpenCode does NOT expose context utilization % to its own agents (Phase 1 research finding). The Handoff.md trigger therefore uses instructed self-detection — the agent's own judgment on when context feels crowded — not a token-count or percentage threshold. See `.planning/research/phase-1-findings.md` Finding 4.
 
 ## Constraints
 
@@ -59,7 +59,7 @@ Claude Code can delegate coding work to local models and review the result — k
 |----------|-----------|---------|
 | AGENTS.md as checkpoint delivery | Auto-loaded by Claude Code without any extra setup; no GSD dependency | ✓ Good |
 | npm lifecycle hooks for command install | Matches how users already install the package; no manual setup step | ✓ Good |
-| Context % as handoff trigger (not message count) | Tied to actual resource pressure rather than arbitrary message count | — Pending (needs OpenCode research) |
+| Handoff trigger via instructed self-detection (not context %) | OpenCode does not surface context % to agents; LLM self-judgment is the only available signal — see `.planning/research/phase-1-findings.md` Finding 4 | ✓ Decided (Phase 1) |
 
 ## Evolution
 
