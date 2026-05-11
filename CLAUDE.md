@@ -118,3 +118,9 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Available Workers
+
+- **thor** — vllm/Qwen/Qwen3-Coder-30B-A3B-Instruct, localhost:4096, capacity: 2
+- **lab** — vllm/Qwen/Qwen3-Coder-30B-A3B-Instruct, localhost:4097, capacity: 1
+- **bee** — ollama/qwen3-coder, localhost:4098, capacity: 2
