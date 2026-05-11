@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v2.1
+milestone_name: milestone
+status: planning
+stopped_at: Phase 1 context gathered
+last_updated: "2026-05-11T17:02:07.649Z"
+last_activity: 2026-05-11 — Roadmap created; all 10 v2.1 requirements mapped across 4 phases
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
+---
+
 # Project State
 
 ## Project Reference
@@ -19,6 +35,7 @@ Progress: [░░░░░░░░░░] 0%
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: —
 - Total execution time: 0 hours
@@ -57,6 +74,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11
-Stopped at: Roadmap written; next step is `/gsd-plan-phase 1`
-Resume file: None
+Last session: --stopped-at
+Stopped at: Phase 1 context gathered
+Resume file: --resume-file
