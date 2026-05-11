@@ -236,6 +236,18 @@ server.registerTool(
       const effectiveModel = model ?? (stored?.providerID && stored?.modelID ? stored : undefined);
       const result = await runPrompt(getClient(serverUrl), sessionId, prompt, { model: effectiveModel, agent, system, tools, files, messageID, agentInput, subtaskInput }, dir, controller.signal);
       clearTimeout(timer);
+      // Grace delay: OpenCode's status map updates asynchronously after the stream closes.
+      // Poll for up to 2s so that a prefect_session_status call immediately after prefect_run
+      // returns sees idle rather than a stale busy.
+      try {
+        const graceDeadline = Date.now() + 2000;
+        while (Date.now() < graceDeadline) {
+          const { data } = await getClient(serverUrl).session.status({ query: dir ? { directory: dir } : undefined });
+          const statusEntry = (data as Record<string, { type: string }> | null)?.[sessionId];
+          if (!statusEntry || statusEntry.type !== 'busy') break;
+          await new Promise<void>((r) => setTimeout(r, 250));
+        }
+      } catch { /* best-effort — never block the return on status lag */ }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (err) {
       clearTimeout(timer);
@@ -604,23 +616,32 @@ server.registerTool(
   }
 );
 
-// SESSION-03: Get real-time status of ALL active sessions (global endpoint — no sessionId param)
+// SESSION-03: Get real-time status of ALL active sessions (global endpoint).
+// FIX: accepts optional sessionId to route to the correct server in multi-server
+// setups — without it, the default server would always be queried regardless of
+// which server owns the session.
 server.registerTool(
   'prefect_session_status',
   {
-    description: 'Get the real-time status of all active OpenCode sessions. Returns a map of sessionID → SessionStatus where status is one of: { type: "idle" }, { type: "busy" }, or { type: "retry", attempt, message, next }. Use this before calling prefect_run to verify the target session is idle and not still processing a previous prompt.',
+    description: 'Get the real-time status of active OpenCode sessions. Returns a map of sessionID → SessionStatus where status is one of: { type: "idle" }, { type: "busy" }, or { type: "retry", attempt, message, next }. Pass sessionId to scope the result to one session and route to the correct server (required when multiple servers are registered).',
     inputSchema: z.object({
+      sessionId: z.string().optional().describe('Optional: scope to a specific session and route to the server that owns it. If omitted, queries the default/first registered server.'),
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ directory }) => {
+  async ({ sessionId, directory }) => {
     const dir = resolveDirectory(directory);
     try {
-      const serverUrl = resolveServerUrl();
+      const serverUrl = sessionId ? resolveServerUrl(sessionId) : resolveServerUrl();
       const { data, error } = await getClient(serverUrl).session.status({
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw new Error(JSON.stringify(error));
+      if (sessionId) {
+        // Return just the requested session; treat missing-from-map as idle (consistent with prefect_await)
+        const entry = (data as Record<string, unknown>)[sessionId] ?? { type: 'idle' };
+        return { content: [{ type: 'text', text: JSON.stringify({ [sessionId]: entry }) }] };
+      }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1209,13 +1230,34 @@ server.registerTool(
     const deadline = Date.now() + timeoutMs;
     try {
       const serverUrl = resolveServerUrl(sessionId);
-      // Poll until idle or timeout
+      // Poll until idle or timeout.
+      // Stuck-busy escape: if status stays "busy" for STALE_BUSY_THRESHOLD consecutive polls,
+      // cross-check against message history. If the last message is from the assistant the
+      // agent has finished but OpenCode's status map has not caught up — break and treat as idle.
+      const STALE_BUSY_THRESHOLD = 5;
+      let staleBusyCount = 0;
       while (true) {
         const { data, error } = await getClient(serverUrl).session.status({ query: dir ? { directory: dir } : undefined });
         if (error) throw new Error(JSON.stringify(error));
         const statusEntry = (data as Record<string, { type: string }>)[sessionId];
         // Treat undefined (session not in map) as idle — may have completed before first poll
         if (!statusEntry || statusEntry.type === 'idle') break;
+        if (statusEntry.type === 'busy') {
+          staleBusyCount++;
+          if (staleBusyCount >= STALE_BUSY_THRESHOLD) {
+            const msgResult = await getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined });
+            if (!msgResult.error && Array.isArray(msgResult.data) && msgResult.data.length > 0) {
+              const lastMsg = msgResult.data[msgResult.data.length - 1] as { info: { role?: string } };
+              if ((lastMsg.info as { role?: string }).role === 'assistant') {
+                console.error(`[Prefect] prefect_await: breaking on stale busy — last message is assistant after ${staleBusyCount} busy polls (session ${sessionId})`);
+                break;
+              }
+            }
+            staleBusyCount = 0;
+          }
+        } else {
+          staleBusyCount = 0; // reset on retry or other non-busy state
+        }
         if (Date.now() >= deadline) {
           return {
             content: [{ type: 'text', text: JSON.stringify({ error: `prefect_await timed out after ${timeoutMs}ms`, sessionId }) }],
