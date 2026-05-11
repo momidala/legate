@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { addServer, removeServer, listServers, readRegistry } from './registry.js';
 
 // Resolve absolute path to build/index.js (the MCP server) from this CLI's
@@ -28,6 +29,20 @@ const PREFECT_ENTRY = isGlobal
       command: 'node',
       args: [resolve(__dirname, 'index.js')],
     } as const;
+
+// Template for ~/.claude/commands/prefect-update.md (SELFUP-03, SELFUP-04, SELFUP-05).
+// Format: Claude Code slash command markdown — invoked as /prefect-update.
+// The bash block updates the package (D-02), then displays the new version with restart prompt (D-03).
+const PREFECT_UPDATE_COMMAND_CONTENT = `Update the prefect package to the latest version, then confirm and prompt restart.
+
+Run this bash command:
+
+\`\`\`bash
+npm install -g @momidala/prefect@latest && \\
+  NEW_VERSION=$(node -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/prefect/package.json'));process.stdout.write(pkg.version);") && \\
+  echo "prefect updated to v$NEW_VERSION. Restart Claude Code to apply."
+\`\`\`
+`;
 
 function updateClaudemdWorkers(cwd: string): void {
   const claudePath = resolve(cwd, 'CLAUDE.md');
@@ -71,6 +86,8 @@ function usageAndExit(): never {
     '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
     '  remove-server <name>                    Remove a named server from the registry\n' +
     '  list-servers                            List all registered servers\n' +
+    '  install-command                         Install /prefect-update Claude command (global installs only)\n' +
+    '  uninstall-command                       Remove /prefect-update Claude command (global installs only)\n' +
     '  version                                 Print the installed version',
   );
   process.exit(1);
@@ -125,6 +142,39 @@ function handleRemoveServer(handlerArgs: string[]): never {
 
 function handleListServers(): never {
   listServers();
+  process.exit(0);
+}
+
+function handleInstallCommand(): never {
+  // D-05: silent skip for non-global installs — do not pollute ~/.claude/commands/
+  if (!isGlobal) process.exit(0);
+
+  const destDir = join(homedir(), '.claude', 'commands');
+  const dest = join(destDir, 'prefect-update.md');
+
+  try {
+    // D-06: create ~/.claude/commands/ if it does not exist
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(dest, PREFECT_UPDATE_COMMAND_CONTENT);
+  } catch (err) {
+    // D-07: warn to stderr, exit 0 — broken command install must NEVER block npm install
+    console.error(`Warning: prefect-update command not installed — ${(err as Error).message}`);
+    process.exit(0);
+  }
+  process.exit(0);
+}
+
+function handleUninstallCommand(): never {
+  // D-05: silent skip for non-global installs
+  if (!isGlobal) process.exit(0);
+
+  const dest = join(homedir(), '.claude', 'commands', 'prefect-update.md');
+  try {
+    // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
+    if (existsSync(dest)) rmSync(dest);
+  } catch {
+    // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
+  }
   process.exit(0);
 }
 
@@ -202,6 +252,12 @@ switch (subcommand) {
     break;
   case 'list-servers':
     handleListServers();
+    break;
+  case 'install-command':
+    handleInstallCommand();
+    break;
+  case 'uninstall-command':
+    handleUninstallCommand();
     break;
   case 'version': {
     const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
