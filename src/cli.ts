@@ -70,7 +70,8 @@ function usageAndExit(): never {
     '  init [--force]                          Write .mcp.json for this project\n' +
     '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
     '  remove-server <name>                    Remove a named server from the registry\n' +
-    '  list-servers                            List all registered servers',
+    '  list-servers                            List all registered servers\n' +
+    '  version                                 Print the installed version',
   );
   process.exit(1);
 }
@@ -143,6 +144,12 @@ const args = process.argv.slice(2);
 const subcommand = args[0];
 const force = args.includes('--force');
 
+if (subcommand === '--version' || subcommand === '-v') {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  console.log(version);
+  process.exit(0);
+}
+
 switch (subcommand) {
   case 'init': {
     const mcpJsonPath = resolve(process.cwd(), '.mcp.json');
@@ -196,6 +203,11 @@ switch (subcommand) {
   case 'list-servers':
     handleListServers();
     break;
+  case 'version': {
+    const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    console.log(version);
+    process.exit(0);
+  }
   default:
     usageAndExit();
 }
