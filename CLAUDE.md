@@ -24,12 +24,13 @@ Always follow this exact sequence. Do not improvise step ordering.
 4. **REVIEW.** Read the diff. Read any modified files yourself if you need more context than the diff shows.
 5. **TEST.** Use the Bash tool to run the project's test/build commands (e.g. `npm run build`, `npm test` if it exists, or any task-specific verification). Do NOT delegate this to OpenCode — you run tests, you decide.
 6. **DECIDE.** Based on the diff and test results, choose ONE:
-   - **Tests pass + diff is good** -> `git add <files> && git commit -m "<message>"`. Done.
+   - **Tests pass + diff is good** -> `git add <files> && git commit -m "<message>"`. Then go to step 7.
    - **Tests fail or diff needs tweaks** -> `prefect_run({sessionId, prompt: "correct: <specific feedback>"})`. Go back to step 3.
    - **Session is off-rails (wrong files touched, model is confused)** -> `prefect_fork({sessionId, messageID: <id of last good message>})` to get a clean copy at a safe point, then go to step 2 with the new session ID.
    - **Single bad message to undo** -> `prefect_revert({sessionId, messageID: <bad message id>})`, then go to step 2.
    - **Give up entirely** -> `git checkout -- .` to reset the working tree; discard the session.
-7. **ABORT IF STUCK.** If `prefect_run` is taking too long and you want to stop it before the timeout, call `prefect_abort({sessionId})`.
+7. **DELETE SESSION.** Call `prefect_session_delete({sessionId})`. This is required hygiene — sessions that are not deleted count against server capacity and accumulate in sessions.json indefinitely. Always delete when a session's work is complete, even if you are discarding the result.
+8. **ABORT IF STUCK.** If `prefect_run` is taking too long and you want to stop it before the timeout, call `prefect_abort({sessionId})`.
 
 ## Permission Handling
 

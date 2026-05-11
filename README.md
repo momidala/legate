@@ -261,6 +261,7 @@ With everything wired up, follow `examples/test-task.md` to confirm the full cre
 | `PREFECT_DEFAULT_PROJECT` | _(unset)_ | Working directory passed to `opencode serve` on auto-start; defaults to Prefect's own cwd |
 | `PREFECT_SERVER_PASSWORD` | _(unset)_ | HTTP Basic Auth password for OpenCode server (read at every tool call) |
 | `PREFECT_SERVER_USERNAME` | `opencode` | HTTP Basic Auth username (only used when `PREFECT_SERVER_PASSWORD` is set) |
+| `PREFECT_SESSION_TTL_MS` | `86400000` | Sessions older than this (ms) are pruned from sessions.json on every read (default: 24 h) |
 
 > **Deprecated names:** Old `OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, and `OPENCODE_DEFAULT_PROJECT` env var names still work but emit a stderr deprecation warning on first use. Migrate to the `PREFECT_*` names above.
 

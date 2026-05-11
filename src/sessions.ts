@@ -2,12 +2,16 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { lock } from 'proper-lockfile';
+import { buildAuthHeader } from './auth.js';
+
+const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
 
 export interface SessionEntry {
   server: string;  // name from registry (must match a ServerEntry.name in servers.json)
   url: string;     // full http://host:port URL — stored alongside name so error messages show both without re-lookup
   model?: { providerID: string; modelID: string };  // registered model for this server — auto-injected on every prefect_run
   parentId?: string;  // set when session was created via prefect_fork — used by prefect_session_children
+  createdAt?: number; // unix ms — used for TTL pruning; absent on legacy entries (treated as non-expired)
 }
 
 export interface SessionMap {
@@ -23,7 +27,20 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
     if (!parsed || typeof parsed.sessions !== 'object' || Array.isArray(parsed.sessions)) {
       throw new Error(`malformed sessions map at ${sessionsPath}: expected { sessions: { ... } }`);
     }
-    return parsed as SessionMap;
+    const map = parsed as SessionMap;
+    // TTL pruning: remove entries older than PREFECT_SESSION_TTL_MS (default 24h).
+    // Legacy entries without createdAt are kept (treated as non-expired).
+    const ttlMs = Number(process.env.PREFECT_SESSION_TTL_MS ?? DEFAULT_SESSION_TTL_MS);
+    const now = Date.now();
+    let pruned = false;
+    for (const [id, entry] of Object.entries(map.sessions)) {
+      if (entry.createdAt !== undefined && now - entry.createdAt > ttlMs) {
+        delete map.sessions[id];
+        pruned = true;
+      }
+    }
+    if (pruned) writeSessionMap(map, sessionsPath);
+    return map;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { sessions: {} };
@@ -40,7 +57,7 @@ export function writeSessionMap(map: SessionMap, sessionsPath: string = SESSIONS
 
 export function addSession(sessionId: string, entry: SessionEntry, sessionsPath: string = SESSIONS_PATH): void {
   const map = readSessionMap(sessionsPath);
-  map.sessions[sessionId] = entry;
+  map.sessions[sessionId] = { createdAt: Date.now(), ...entry };
   writeSessionMap(map, sessionsPath);
 }
 
@@ -60,6 +77,18 @@ export function countSessionsForServer(serverName: string, sessionsPath: string 
   return Object.values(map.sessions).filter((e) => e.server === serverName).length;
 }
 
+/** Returns true if the server confirms the session exists (HTTP 200), false otherwise. */
+async function isSessionLive(sessionId: string, serverUrl: string): Promise<boolean> {
+  try {
+    const res = await globalThis.fetch(`${serverUrl}/session/${sessionId}`, {
+      headers: buildAuthHeader(),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function withSessionLock<T>(fn: () => T | Promise<T>, sessionsPath: string = SESSIONS_PATH): Promise<T> {
   mkdirSync(dirname(sessionsPath), { recursive: true });
   const release = await lock(sessionsPath, {
@@ -76,8 +105,12 @@ async function withSessionLock<T>(fn: () => T | Promise<T>, sessionsPath: string
 
 /**
  * Atomically checks server capacity and registers the session in sessions.json under a file lock.
- * The lock covers the full read → count → check → write sequence so concurrent Claude Code
- * instances cannot both pass the capacity gate for the same server.
+ * The lock covers the full read → liveness-check → count → check → write sequence so concurrent
+ * Claude Code instances cannot both pass the capacity gate for the same server.
+ *
+ * Before counting, each existing session for the target server is verified via GET /session/:id.
+ * Any entry whose server returns non-200 (including connection refused after a restart) is pruned
+ * from sessions.json immediately and not counted toward capacity.
  *
  * Returns an error string if the server is at capacity (caller must abort the just-created
  * OpenCode session), or undefined on success.
@@ -89,18 +122,40 @@ export async function atomicCheckAndAdd(
   maxSessions: number | null | undefined,
   sessionsPath: string = SESSIONS_PATH,
 ): Promise<string | undefined> {
+  // Run liveness checks outside the lock — they're HTTP calls and could be slow.
+  // Snapshot which sessions need checking before acquiring the lock.
+  const preMap = readSessionMap(sessionsPath);
+  const candidateIds = Object.entries(preMap.sessions)
+    .filter(([, e]) => e.server === entry.server)
+    .map(([id, e]) => ({ id, url: e.url }));
+
+  const liveChecks = await Promise.all(
+    candidateIds.map(async ({ id, url }) => ({ id, live: await isSessionLive(id, url) })),
+  );
+  const deadIds = new Set(liveChecks.filter(({ live }) => !live).map(({ id }) => id));
+
   return withSessionLock(async () => {
     const map = readSessionMap(sessionsPath);
+    // Prune dead sessions found during pre-lock liveness check.
+    let pruned = false;
+    for (const deadId of deadIds) {
+      if (deadId in map.sessions && map.sessions[deadId].server === entry.server) {
+        delete map.sessions[deadId];
+        pruned = true;
+      }
+    }
+
     if (maxSessions != null) {
       const active = Object.values(map.sessions).filter((e) => e.server === entry.server).length;
       if (active >= maxSessions) {
+        if (pruned) writeSessionMap(map, sessionsPath);
         return (
           `Server '${entry.server}' is at capacity (${active}/${maxSessions} active sessions). ` +
           `Delete an existing session with prefect_session_delete or choose a different server.`
         );
       }
     }
-    map.sessions[sessionId] = entry;
+    map.sessions[sessionId] = { createdAt: Date.now(), ...entry };
     writeSessionMap(map, sessionsPath);
     return undefined;
   }, sessionsPath);

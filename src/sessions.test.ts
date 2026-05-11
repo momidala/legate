@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
-import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession } from './sessions.js';
+import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd } from './sessions.js';
 
 function freshTmp(): string {
   return mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
@@ -48,7 +48,9 @@ test('addSession persists a new entry and lookupSession reads it back', () => {
     const regPath = join(dir, 'sessions.json');
     addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
     const entry = lookupSession('ses_abc123', regPath);
-    assert.deepEqual(entry, { server: 'local', url: 'http://localhost:4096' });
+    assert.equal(entry?.server, 'local');
+    assert.equal(entry?.url, 'http://localhost:4096');
+    assert.equal(typeof entry?.createdAt, 'number');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -145,6 +147,135 @@ test('addSession without model stores entry with no model field', () => {
     const entry = lookupSession('ses_abc123', regPath);
     assert.equal(entry?.model, undefined);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('addSession stamps createdAt on new entries', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'sessions.json');
+    const before = Date.now();
+    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    const after = Date.now();
+    const entry = lookupSession('ses_abc123', regPath);
+    assert.ok(entry?.createdAt !== undefined, 'createdAt should be set');
+    assert.ok(entry!.createdAt! >= before && entry!.createdAt! <= after, 'createdAt should be within test window');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readSessionMap prunes entries older than PREFECT_SESSION_TTL_MS', () => {
+  const dir = freshTmp();
+  const orig = process.env.PREFECT_SESSION_TTL_MS;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    const old = Date.now() - 1000; // 1 second ago
+    writeSessionMap({
+      sessions: {
+        'ses_old': { server: 'local', url: 'http://localhost:4096', createdAt: old },
+        'ses_new': { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+    // TTL of 500ms — ses_old (1s old) should be pruned, ses_new should survive
+    process.env.PREFECT_SESSION_TTL_MS = '500';
+    const map = readSessionMap(regPath);
+    assert.ok(!('ses_old' in map.sessions), 'expired entry should be pruned');
+    assert.ok('ses_new' in map.sessions, 'fresh entry should survive');
+  } finally {
+    if (orig === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
+    else process.env.PREFECT_SESSION_TTL_MS = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readSessionMap keeps legacy entries without createdAt (never expires them)', () => {
+  const dir = freshTmp();
+  const orig = process.env.PREFECT_SESSION_TTL_MS;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    writeSessionMap({
+      sessions: {
+        'ses_legacy': { server: 'local', url: 'http://localhost:4096' }, // no createdAt
+      },
+    }, regPath);
+    process.env.PREFECT_SESSION_TTL_MS = '1'; // 1ms TTL — would prune anything with createdAt
+    const map = readSessionMap(regPath);
+    assert.ok('ses_legacy' in map.sessions, 'legacy entry without createdAt should never be pruned');
+  } finally {
+    if (orig === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
+    else process.env.PREFECT_SESSION_TTL_MS = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('atomicCheckAndAdd prunes stale sessions (non-200 liveness) before capacity check', async () => {
+  const dir = freshTmp();
+  const origFetch = globalThis.fetch;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    // Pre-populate with two sessions for the same server
+    writeSessionMap({
+      sessions: {
+        'ses_dead': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        'ses_alive': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+
+    // Mock fetch: ses_dead → 404, ses_alive → 200
+    (globalThis as Record<string, unknown>).fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (url.includes('ses_dead')) return new Response(null, { status: 404 });
+      if (url.includes('ses_alive')) return new Response('{}', { status: 200 });
+      return new Response('{}', { status: 200 });
+    };
+
+    // maxSessions=2, but ses_dead is pruned → only 1 alive → should succeed
+    const result = await atomicCheckAndAdd(
+      'ses_new',
+      { server: 'myserver', url: 'http://localhost:4096' },
+      2,
+      regPath,
+    );
+    assert.equal(result, undefined, 'should not return capacity error');
+
+    const map = readSessionMap(regPath);
+    assert.ok(!('ses_dead' in map.sessions), 'dead session should be pruned');
+    assert.ok('ses_alive' in map.sessions, 'live session should remain');
+    assert.ok('ses_new' in map.sessions, 'new session should be added');
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('atomicCheckAndAdd enforces capacity after pruning dead sessions', async () => {
+  const dir = freshTmp();
+  const origFetch = globalThis.fetch;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    writeSessionMap({
+      sessions: {
+        'ses_a': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        'ses_b': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+
+    // Both sessions are live
+    (globalThis as Record<string, unknown>).fetch = async () => new Response('{}', { status: 200 });
+
+    // maxSessions=2 with 2 live sessions → should be at capacity
+    const result = await atomicCheckAndAdd(
+      'ses_new',
+      { server: 'myserver', url: 'http://localhost:4096' },
+      2,
+      regPath,
+    );
+    assert.ok(result !== undefined, 'should return capacity error string');
+    assert.ok(result.includes('at capacity'), 'error should mention capacity');
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = origFetch;
     rmSync(dir, { recursive: true, force: true });
   }
 });
