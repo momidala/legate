@@ -46,7 +46,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 02-01-PLAN.md — Add install-command and uninstall-command CLI subcommands (with inline /prefect-update template) plus tests
-- [ ] 02-02-PLAN.md — Wire postinstall and preuninstall lifecycle hooks in package.json
+- [x] 02-02-PLAN.md — Wire postinstall and preuninstall lifecycle hooks in package.json
 
 
 ### Phase 3: Checkpoint Schemas + Delivery
