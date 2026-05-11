@@ -7,6 +7,29 @@
 
 ---
 
+## For Phase 3 Implementers (Checkpoint Schemas + Delivery)
+
+Required reading from this doc:
+- Finding 1: AGENTS.md auto-load mechanism (the delivery vehicle)
+- Finding 2: Why session-level system prompt is unavailable
+- Finding 3: Per-run `system` field as backup
+- Canonical AGENTS.md Checkpoint Instruction Template (paste this verbatim)
+- Delivery Mechanism Summary table
+
+You DO NOT need to read: `.planning/phases/01-context-api-research/01-CONTEXT.md`, `01-RESEARCH.md`, or rerun any OpenCode API probes.
+
+## For Phase 4 Implementers (Handoff Trigger)
+
+Required reading from this doc:
+- Finding 4: Context utilization is NOT visible to the agent
+- Trigger Design Summary table
+- Canonical AGENTS.md Checkpoint Instruction Template (Handoff paragraph)
+- Open Question: per-run `system` vs AGENTS.md interaction (test this if you need both)
+
+You DO NOT need to read: `.planning/phases/01-context-api-research/01-CONTEXT.md` or `01-RESEARCH.md`.
+
+---
+
 ## Finding 1: AGENTS.md is auto-loaded by OpenCode agents
 
 **Answer:** YES — confirmed.
@@ -86,6 +109,32 @@ Note: The `AssistantMessage.tokens` object (`{ input, output, reasoning, cache: 
 
 ---
 
+## Canonical AGENTS.md Checkpoint Instruction Template
+
+Phase 3 implementers: paste the following block into the project `AGENTS.md` under a new `## Checkpointing` section. Do not modify the wording without re-testing the trigger sensitivity.
+
+```markdown
+## Checkpointing
+
+After each file-modifying tool call (`edit`, `write`, `apply_patch`), update `checkpoint.md` in the working directory with:
+- **current_task:** what you are working on
+- **last_change:** what you just did (file path + one-line summary)
+- **remaining_steps:** what is left
+- **status:** `in_progress` | `complete` | `blocked`
+
+When you sense you are approaching your context limit — for example, if you have been
+working for a long time, if tracking all state feels difficult, or if the conversation
+feels crowded — write `Handoff.md` in the working directory with:
+- **accomplished:** what was completed this session
+- **current_state:** where the work stands now (which files, which step)
+- **next_steps:** what should happen next, in order
+- **open_questions:** anything you were unsure about
+
+After writing `Handoff.md`, stop initiating new work in this session. Do not wait for an error.
+```
+
+---
+
 ## Delivery Mechanism Summary
 
 | Mechanism | Supported | Persistent | Requires Code Change | Recommended |
@@ -123,3 +172,5 @@ If both AGENTS.md and a per-run `system` are present, the interaction is unteste
 
 *Source: `.planning/phases/01-context-api-research/01-RESEARCH.md`*
 *Verified: 2026-05-11 against OpenCode v1.14.48, @opencode-ai/sdk v1.14.25*
+
+*Audit: 2026-05-11 — verified D-07 (structured Q&A) and D-08 (self-contained for Phase 3/4) compliance.*
