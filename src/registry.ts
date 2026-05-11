@@ -39,6 +39,15 @@ export function writeRegistry(reg: Registry, registryPath: string = REGISTRY_PAT
 
 export function addServer(entry: ServerEntry, registryPath: string = REGISTRY_PATH): void {
   const reg = readRegistry(registryPath);
+  const conflict = reg.servers.find(
+    (s) => s.host === entry.host && s.port === entry.port && s.name !== entry.name,
+  );
+  if (conflict) {
+    throw new Error(
+      `Host/port conflict: '${conflict.name}' is already registered at ${entry.host}:${entry.port}. ` +
+      `Each server must have a unique host:port combination.`,
+    );
+  }
   const existing = reg.servers.findIndex((s) => s.name === entry.name);
   if (existing !== -1) {
     console.log(`Updated existing server '${entry.name}'.`);

@@ -238,3 +238,32 @@ test('MULTI-11: listServers shows numeric capacity for capped server', () => {
     assert.ok(res.stdout.includes('3'), `stdout missing '3', was: ${res.stdout}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('addServer throws on host:port conflict with a differently-named server', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3' }, regPath);
+    assert.throws(
+      () => addServer({ name: 'beta', host: 'localhost', port: 4096, providerID: 'ollama', modelID: 'qwen3' }, regPath),
+      /Host\/port conflict/,
+    );
+    // Registry should still contain only alpha
+    const reg = readRegistry(regPath);
+    assert.equal(reg.servers.length, 1);
+    assert.equal(reg.servers[0].name, 'alpha');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('addServer allows updating a server to the same host:port (same name is not a conflict)', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3' }, regPath);
+    assert.doesNotThrow(
+      () => addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3-turbo' }, regPath),
+    );
+    const reg = readRegistry(regPath);
+    assert.equal(reg.servers[0].modelID, 'qwen3-turbo');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
