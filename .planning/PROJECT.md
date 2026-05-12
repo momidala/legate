@@ -79,4 +79,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-12 — Phase 2 (self-update) complete. `postinstall` hook writes `/prefect-update` slash command on global install. `uninstall-command` available for manual cleanup.*
+*Last updated: 2026-05-12 — Phase 3 (checkpoint-schemas-delivery) complete. `AGENTS.md` now contains `## Checkpointing` section with `checkpoint.md` and `Handoff.md` schemas, auto-loaded by every OpenCode agent session. CKPT-01, CKPT-02, CKPT-04 satisfied.*
