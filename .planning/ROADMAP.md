@@ -59,7 +59,9 @@ Plans:
   2. The `checkpoint.md` schema (current task, last change, remaining steps, status) is defined and referenced in the delivery artifact
   3. The `Handoff.md` schema (accomplished, current state, next steps, open questions) is defined and discoverable without reading source code
   4. A prefect agent following the delivered instructions can produce a valid `checkpoint.md` without ambiguity about what fields to include
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 03-01-PLAN.md — Append `## Checkpointing` section (verbatim Phase 1 canonical template) to AGENTS.md; defines checkpoint.md and Handoff.md schemas inline
 
 ### Phase 4: Handoff Trigger
 **Goal**: When a prefect agent's context reaches ~80%, the agent writes `Handoff.md` and stops work, using the trigger mechanism identified in Phase 1
@@ -83,5 +85,5 @@ Phase 2 is independent of all others. Phase 3 depends on Phase 1 (delivery mecha
 |-------|----------------|--------|-----------|
 | 1. Context API Research | 1/1 | Complete | 2026-05-11 |
 | 2. Self-Update | 0/TBD | Not started | - |
-| 3. Checkpoint Schemas + AGENTS.md | 0/TBD | Not started | - |
+| 3. Checkpoint Schemas + AGENTS.md | 0/1 | Not started | - |
 | 4. Handoff Trigger | 0/TBD | Not started | - |
