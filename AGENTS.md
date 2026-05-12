@@ -98,3 +98,19 @@ cp -rf source dest          # NOT: cp -r source dest
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Checkpointing
+
+After each file-modifying tool call (`edit`, `write`, `apply_patch`), update `checkpoint.md` in the working directory with:
+- **current_task:** what you are working on
+- **last_change:** what you just did (file path + one-line summary)
+- **remaining_steps:** what is left
+- **status:** `in_progress` | `complete` | `blocked`
+
+When you sense you are approaching your context limit — for example, if you have been working for a long time, if tracking all state feels difficult, or if the conversation feels crowded — write `Handoff.md` in the working directory with:
+- **accomplished:** what was completed this session
+- **current_state:** where the work stands now (which files, which step)
+- **next_steps:** what should happen next, in order
+- **open_questions:** anything you were unsure about
+
+After writing `Handoff.md`, stop initiating new work in this session. Do not wait for an error.
