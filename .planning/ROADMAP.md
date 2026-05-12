@@ -73,7 +73,9 @@ Plans:
   2. After writing `Handoff.md`, the prefect agent stops initiating new work in that session
   3. `Handoff.md` content conforms to the schema defined in Phase 3
   4. A developer reading `Handoff.md` has enough context to resume the work without re-reading the entire session chat
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 04-01-PLAN.md — Verify CKPT-03 trigger is live in AGENTS.md; close CKPT-03 tracking entries in REQUIREMENTS.md, ROADMAP.md, STATE.md
 
 ## Progress
 
