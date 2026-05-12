@@ -61,7 +61,7 @@ Plans:
   4. A prefect agent following the delivered instructions can produce a valid `checkpoint.md` without ambiguity about what fields to include
 **Plans:** 1 plan
 Plans:
-- [ ] 03-01-PLAN.md — Append `## Checkpointing` section (verbatim Phase 1 canonical template) to AGENTS.md; defines checkpoint.md and Handoff.md schemas inline
+- [x] 03-01-PLAN.md — Append `## Checkpointing` section (verbatim Phase 1 canonical template) to AGENTS.md; defines checkpoint.md and Handoff.md schemas inline
 
 ### Phase 4: Handoff Trigger
 **Goal**: When a prefect agent's context reaches ~80%, the agent writes `Handoff.md` and stops work, using the trigger mechanism identified in Phase 1

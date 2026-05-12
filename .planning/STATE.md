@@ -4,8 +4,8 @@ milestone: v2.1
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-05-12T20:07:52.528Z"
-last_activity: 2026-05-12 -- Phase 3 planning complete
+last_updated: "2026-05-12T20:32:43.701Z"
+last_activity: 2026-05-12 -- Phase 03 execution started
 progress:
   total_phases: 4
   completed_phases: 2
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-11)
 
 **Core value:** Claude Code can delegate coding work to local models and review the result — keeping the orchestration context clean while local compute handles the edits.
-**Current focus:** Phase 02 — self-update
+**Current focus:** Phase 03 — checkpoint-schemas-delivery
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-12 -- Phase 3 planning complete
+Phase: 03 (checkpoint-schemas-delivery) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 03
+Last activity: 2026-05-12 -- Phase 03 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
