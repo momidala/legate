@@ -79,4 +79,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-11 — Phase 1 (Context API Research) complete*
+*Last updated: 2026-05-12 — Phase 2 (self-update) complete. `postinstall` hook writes `/prefect-update` slash command on global install. `uninstall-command` available for manual cleanup.*
