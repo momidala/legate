@@ -75,7 +75,7 @@ Plans:
   4. A developer reading `Handoff.md` has enough context to resume the work without re-reading the entire session chat
 **Plans:** 1 plan
 Plans:
-- [ ] 04-01-PLAN.md — Verify CKPT-03 trigger is live in AGENTS.md; close CKPT-03 tracking entries in REQUIREMENTS.md, ROADMAP.md, STATE.md
+- [x] 04-01-PLAN.md — Verify CKPT-03 trigger is live in AGENTS.md; close CKPT-03 tracking entries in REQUIREMENTS.md, ROADMAP.md, STATE.md
 
 ## Progress
 
@@ -88,4 +88,4 @@ Phase 2 is independent of all others. Phase 3 depends on Phase 1 (delivery mecha
 | 1. Context API Research | 1/1 | Complete | 2026-05-11 |
 | 2. Self-Update | 0/TBD | Not started | - |
 | 3. Checkpoint Schemas + AGENTS.md | 0/1 | Not started | - |
-| 4. Handoff Trigger | 0/TBD | Not started | - |
+| 4. Handoff Trigger | 1/1 | Complete | 2026-05-12 |
