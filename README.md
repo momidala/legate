@@ -114,7 +114,7 @@ cd /your/project
 /path/to/prefect/build/cli.js init
 ```
 
-`prefect init` (run from a local clone) detects the absence of the `node_modules/@momidala/prefect/` path segment and writes:
+`prefect init` (run from a local clone) detects that `npm_config_global` is not set and writes:
 
 ```json
 {
@@ -332,6 +332,56 @@ prefect_create_session({ title: "my task", server: "remote", directory: "/path/t
 ```
 
 Omit `server` to use the first registered server. Claude Code reads the `## Available Workers` section in `CLAUDE.md` to know which names are available.
+
+## Self-Update
+
+When you install prefect globally, the `/prefect-update` Claude Code slash command is installed automatically:
+
+```bash
+npm install -g @momidala/prefect
+# ~/.claude/commands/prefect-update.md is now installed
+```
+
+To update prefect from inside Claude Code, run:
+
+```
+/prefect-update
+```
+
+The command runs `npm install -g @momidala/prefect@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
+
+When you uninstall prefect, the command file is removed automatically:
+
+```bash
+npm uninstall -g @momidala/prefect
+# ~/.claude/commands/prefect-update.md is removed
+```
+
+## Agent Checkpointing
+
+Prefect agents (OpenCode sessions spawned via `prefect_run`) can write checkpoint and handoff files to help you recover context after a long session.
+
+**Setup:** Place `AGENTS.md` in your project root (or copy the `## Checkpointing` section from this repo's `AGENTS.md`). OpenCode auto-loads `AGENTS.md` at session start, so no extra configuration is needed.
+
+**Checkpoint file (`checkpoint.md`)** — written by the agent after each file-modifying tool call:
+
+| Field | Content |
+|-------|---------|
+| `current_task` | What the agent is working on right now |
+| `last_change` | Most recent file edit (path + one-line description) |
+| `remaining_steps` | Ordered list of what's left to do |
+| `status` | `in_progress` \| `blocked` \| `complete` |
+
+**Handoff file (`Handoff.md`)** — written when the agent senses its context is getting crowded (not a hard token threshold — the agent uses its own judgment):
+
+| Field | Content |
+|-------|---------|
+| `accomplished` | What was completed this session |
+| `current_state` | Where the work stands now (files, step) |
+| `next_steps` | What should happen next, in order |
+| `open_questions` | Anything the agent was unsure about |
+
+After writing `Handoff.md`, the agent stops initiating new work. You can then start a fresh session and point it at `Handoff.md` to resume without re-reading the full chat.
 
 ## Session Lifecycle
 

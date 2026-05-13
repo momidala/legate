@@ -8,13 +8,9 @@ Prefect is a TypeScript MCP server that bridges Claude Code to a locally running
 
 Claude Code can delegate coding work to local models and review the result — keeping the orchestration context clean while local compute handles the edits.
 
-## Current Milestone: v2.1 Developer Experience — ✓ Complete (2026-05-13)
+## Shipped: v2.1 Developer Experience — ✅ 2026-05-13
 
-**Goal:** Add self-update and automatic checkpointing to improve the day-to-day developer workflow for prefect users.
-
-**Target features:**
-- Self-update mechanism (npm lifecycle hooks + `/prefect-update` Claude command)
-- Automatic checkpointing for prefect agents (after each file modification; Handoff.md at ~80% agent context)
+Added self-update (npm lifecycle hooks + `/prefect-update` Claude command) and automatic checkpointing (AGENTS.md delivery; Handoff.md at agent context pressure).
 
 ## Requirements
 
@@ -28,11 +24,12 @@ Claude Code can delegate coding work to local models and review the result — k
 - ✓ Multi-server configuration documentation — v2.0
 - ✓ Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism: AGENTS.md auto-load) — Validated in Phase 3: checkpoint-schemas-delivery
 - ✓ Handoff.md written by prefect agent when context pressure is sensed (trigger mechanism: instructed self-detection via AGENTS.md `## Checkpointing` section) — Validated in Phase 4: handoff-trigger (CKPT-03)
+- ✓ npm postinstall/preuninstall hooks install/remove `/prefect-update` Claude command automatically — v2.1
+- ✓ `/prefect-update` command updates package, displays new version, prompts restart — v2.1
 
 ### Active
 
-- [ ] npm postinstall/preuninstall hooks install and remove `/prefect-update` Claude command
-- [ ] `/prefect-update` command updates package, verifies version, prompts restart
+*(none — planning next milestone)*
 
 ### Out of Scope
 
@@ -79,4 +76,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-13 — Phase 4 (handoff-trigger) complete. CKPT-03 satisfied: `AGENTS.md ## Checkpointing` contains the calibrated handoff trigger phrase and stop instruction. v2.1 milestone (4/4 phases, 5/5 plans) is 100% complete.*
+*Last updated: 2026-05-13 after v2.1 milestone — all 10 requirements shipped. Self-update and checkpointing delivered. Ready for next milestone.*
