@@ -8,7 +8,7 @@ Prefect is a TypeScript MCP server that bridges Claude Code to a locally running
 
 Claude Code can delegate coding work to local models and review the result — keeping the orchestration context clean while local compute handles the edits.
 
-## Current Milestone: v2.1 Developer Experience
+## Current Milestone: v2.1 Developer Experience — ✓ Complete (2026-05-13)
 
 **Goal:** Add self-update and automatic checkpointing to improve the day-to-day developer workflow for prefect users.
 
@@ -26,13 +26,13 @@ Claude Code can delegate coding work to local models and review the result — k
 - ✓ HTTP Basic Auth support — v2.0
 - ✓ `prefect version` CLI command — v2.0
 - ✓ Multi-server configuration documentation — v2.0
+- ✓ Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism: AGENTS.md auto-load) — Validated in Phase 3: checkpoint-schemas-delivery
+- ✓ Handoff.md written by prefect agent when context pressure is sensed (trigger mechanism: instructed self-detection via AGENTS.md `## Checkpointing` section) — Validated in Phase 4: handoff-trigger (CKPT-03)
 
 ### Active
 
 - [ ] npm postinstall/preuninstall hooks install and remove `/prefect-update` Claude command
 - [ ] `/prefect-update` command updates package, verifies version, prompts restart
-- [ ] Prefect agents receive checkpoint instructions and write checkpoint.md after each file-modifying tool call (delivery mechanism: AGENTS.md auto-load — see `.planning/research/phase-1-findings.md` Finding 1)
-- [ ] Handoff.md written by prefect agent when context pressure is sensed (trigger mechanism: instructed self-detection — OpenCode does not expose context % to agents; see `.planning/research/phase-1-findings.md` Finding 4)
 
 ### Out of Scope
 
@@ -79,4 +79,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-12 — Phase 3 (checkpoint-schemas-delivery) complete. `AGENTS.md` now contains `## Checkpointing` section with `checkpoint.md` and `Handoff.md` schemas, auto-loaded by every OpenCode agent session. CKPT-01, CKPT-02, CKPT-04 satisfied.*
+*Last updated: 2026-05-13 — Phase 4 (handoff-trigger) complete. CKPT-03 satisfied: `AGENTS.md ## Checkpointing` contains the calibrated handoff trigger phrase and stop instruction. v2.1 milestone (4/4 phases, 5/5 plans) is 100% complete.*
