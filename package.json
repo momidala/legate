@@ -1,6 +1,6 @@
 {
   "name": "@momidala/prefect",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "type": "module",
   "description": "TypeScript MCP server that exposes OpenCode's HTTP API as Claude Code tools",
   "license": "MIT",
