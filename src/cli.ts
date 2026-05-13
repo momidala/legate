@@ -9,11 +9,10 @@ import { addServer, removeServer, listServers, readRegistry } from './registry.j
 // own location. Both files live side-by-side in the build/ output dir.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// DIST-05: detect global vs local install via path-segment check.
-// Node resolves symlinks before computing import.meta.url, so __dirname is
-// always the real file path inside node_modules/<pkg>/build/ for global installs.
-// Normalize backslashes for Windows path support.
-const isGlobal = __dirname.replace(/\\/g, '/').includes('/node_modules/');
+// DIST-05: detect global install via npm_config_global env var (set by npm during
+// lifecycle hooks only when invoked via 'npm install -g'). Falls back to false
+// for direct CLI invocations, which is safe — commands will silently skip.
+const isGlobal = process.env.npm_config_global === 'true';
 
 // Template for the prefect entry written into .mcp.json mcpServers.prefect.
 // Global: use the prefect-mcp PATH bin (added as a second bin entry in package.json).
@@ -39,7 +38,7 @@ Run this bash command:
 
 \`\`\`bash
 npm install -g @momidala/prefect@latest && \\
-  NEW_VERSION=$(node -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/prefect/package.json'));process.stdout.write(pkg.version);") && \\
+  NEW_VERSION=$(node --input-type=commonjs -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/prefect/package.json'));process.stdout.write(pkg.version);") && \\
   echo "prefect updated to v$NEW_VERSION. Restart Claude Code to apply."
 \`\`\`
 `;
@@ -156,6 +155,9 @@ function handleInstallCommand(): never {
     // D-06: create ~/.claude/commands/ if it does not exist
     mkdirSync(destDir, { recursive: true });
     writeFileSync(dest, PREFECT_UPDATE_COMMAND_CONTENT);
+    if (!process.env.npm_lifecycle_event) {
+      console.error(`Installed /prefect-update command to ${dest}`);
+    }
   } catch (err) {
     // D-07: warn to stderr, exit 0 — broken command install must NEVER block npm install
     console.error(`Warning: prefect-update command not installed — ${(err as Error).message}`);
@@ -171,7 +173,7 @@ function handleUninstallCommand(): never {
   const dest = join(homedir(), '.claude', 'commands', 'prefect-update.md');
   try {
     // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
-    if (existsSync(dest)) rmSync(dest);
+    rmSync(dest, { force: true });
   } catch {
     // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
   }

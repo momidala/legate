@@ -453,14 +453,15 @@ function runCliAsGlobal(homeDir: string, ...args: string[]):
   const buildFiles = ['cli.js', 'registry.js'];
   for (const f of buildFiles) {
     const srcPath = join(srcBuildDir, f);
-    if (existsSync(srcPath)) {
-      writeFileSync(join(fakeBuildDir, f), readFileSync(srcPath, 'utf8'));
+    if (!existsSync(srcPath)) {
+      throw new Error(`Build artifact missing: ${srcPath} — run 'npm run build' first`);
     }
+    writeFileSync(join(fakeBuildDir, f), readFileSync(srcPath, 'utf8'));
   }
   // Stub package.json at the fake root (cli.js reads ../package.json for version)
   writeFileSync(join(fakeGlobalRoot, 'package.json'), JSON.stringify({ name: '@momidala/prefect', version: '0.0.0-test' }));
   const fakeCli = join(fakeBuildDir, 'cli.js');
-  const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+  const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir, npm_config_global: 'true' };
   const res = spawnSync('node', [fakeCli, ...args], { cwd: homeDir, encoding: 'utf8', env });
   return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
