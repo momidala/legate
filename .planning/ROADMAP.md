@@ -36,7 +36,7 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
   3. A user who sets `PREFECT_SERVER_URL` gets a deprecation warning and the server still connects; a user who sets `LEGATE_SERVER_URL` gets no warning
   4. README accurately reflects the new package name, binary names, env var names, and includes a migration note for existing prefect users
 **Plans**: 4 plans
-- [ ] 05-01-PLAN.md — Wave 0 TDD: add failing deprecation-warning tests for LEGATE_*/PREFECT_*/OPENCODE_* env var chain in auth/autostart/sessions test files
+- [x] 05-01-PLAN.md — Wave 0 TDD: add failing deprecation-warning tests for LEGATE_*/PREFECT_*/OPENCODE_* env var chain in auth/autostart/sessions test files
 - [ ] 05-02-PLAN.md — Source rename (split A): package.json + src/index.ts (package identity, 40 tool names, BASE_URL and TIMEOUT_MS chains)
 - [ ] 05-02b-PLAN.md — Source rename (split B): remaining src/*.ts (auth, config, autostart, sessions, cli, registry, handlers) + 6 test file updates; turns Plan 01 RED tests GREEN
 - [ ] 05-03-PLAN.md — Documentation rename: README (with migration section), EXAMPLE_CLAUDE, AGENTS, CLAUDE, examples/*; create .gitattributes for Linguist override
