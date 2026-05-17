@@ -63,8 +63,8 @@ test('ensureOpencodeRunning starts two different servers concurrently (separate 
 
 test('ensureOpencodeRunning throws when OpenCode does not become healthy within timeout', async () => {
   const origFetch = globalThis.fetch;
-  const origTimeout = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '200';
+  const origTimeout = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  process.env.LEGATE_AUTOSTART_TIMEOUT_MS = '200';
   (globalThis as unknown as Record<string, unknown>).fetch = errorFetch();
   try {
     await assert.rejects(
@@ -73,14 +73,14 @@ test('ensureOpencodeRunning throws when OpenCode does not become healthy within 
     );
   } finally {
     (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-    if (origTimeout === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = origTimeout;
+    if (origTimeout === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = origTimeout;
   }
 });
 
 test('ensureOpencodeRunning health poll uses authFetch (injects auth header when password set)', async () => {
-  const prevPw = process.env.PREFECT_SERVER_PASSWORD;
-  process.env.PREFECT_SERVER_PASSWORD = 'healthtest';
+  const prevPw = process.env.LEGATE_SERVER_PASSWORD;
+  process.env.LEGATE_SERVER_PASSWORD = 'healthtest';
   const origFetch = globalThis.fetch;
   let capturedAuth: string | null = null;
   (globalThis as unknown as Record<string, unknown>).fetch = (req: Request) => {
@@ -93,8 +93,8 @@ test('ensureOpencodeRunning health poll uses authFetch (injects auth header when
     assert.equal(capturedAuth, expected, 'health poll should inject Authorization header');
   } finally {
     (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-    if (prevPw === undefined) delete process.env.PREFECT_SERVER_PASSWORD;
-    else process.env.PREFECT_SERVER_PASSWORD = prevPw;
+    if (prevPw === undefined) delete process.env.LEGATE_SERVER_PASSWORD;
+    else process.env.LEGATE_SERVER_PASSWORD = prevPw;
   }
 });
 

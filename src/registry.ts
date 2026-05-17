@@ -72,7 +72,7 @@ export function removeServer(name: string, registryPath: string = REGISTRY_PATH)
 export function listServers(registryPath: string = REGISTRY_PATH): void {
   const reg = readRegistry(registryPath);
   if (reg.servers.length === 0) {
-    console.log('No servers registered. Use: prefect add-server <name> <host> <port> <model>');
+    console.log('No servers registered. Use: legate add-server <name> <host> <port> <model>');
     return;
   }
   console.log('NAME            HOST            PORT   PROVIDER        MODEL            CAPACITY');

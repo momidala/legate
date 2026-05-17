@@ -9,7 +9,7 @@ import { readRegistry, writeRegistry, addServer, removeServer } from './registry
 import { countSessionsForServer } from './sessions.js';
 
 function freshTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'prefect-registry-'));
+  return mkdtempSync(join(tmpdir(), 'legate-registry-'));
 }
 
 const REGISTRY_BUILD = resolve(process.cwd(), 'build/registry.js');

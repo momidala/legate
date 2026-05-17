@@ -5,9 +5,29 @@ import { ServerEntry } from './registry.js';
 
 const POLL_INTERVAL_MS = 500; // D-12: hardcoded — fast enough for local startup
 
+let warnedAutostartTimeout = false;
+
 // INFRA-13: Read at call time (not module init) so tests can override via process.env.
-function autostartTimeoutMs(): number {
-  return parseInt(process.env.PREFECT_AUTOSTART_TIMEOUT_MS ?? '', 10) || 30_000;
+// RENAME-04: LEGATE_AUTOSTART_TIMEOUT_MS preferred; PREFECT_AUTOSTART_TIMEOUT_MS falls back with one-time warning.
+export function autostartTimeoutMs(): number {
+  const legate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  if (legate !== undefined) {
+    return parseInt(legate, 10) || 30_000;
+  }
+  const prefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+  if (prefect !== undefined) {
+    if (!warnedAutostartTimeout) {
+      console.error('[Legate] PREFECT_AUTOSTART_TIMEOUT_MS is deprecated, use LEGATE_AUTOSTART_TIMEOUT_MS');
+      warnedAutostartTimeout = true;
+    }
+    return parseInt(prefect, 10) || 30_000;
+  }
+  return 30_000;
+}
+
+/** @internal — test use only. Resets the deprecation warn flag so each test starts clean. */
+export function _resetWarnFlags(): void {
+  warnedAutostartTimeout = false;
 }
 
 // D-16: Per-server promise lock Map. Concurrent callers for the SAME server await the same
@@ -62,7 +82,7 @@ export async function ensureOpencodeRunning(server: ServerEntry): Promise<void> 
   // D-15: localhost guard. Apply BEFORE spawn so remote misconfig fails fast.
   if (server.host !== 'localhost' && server.host !== '127.0.0.1') {
     throw new Error(
-      `[Prefect] Auto-start skipped — server '${server.name}' points to remote host '${server.host}'. ` +
+      `[Legate] Auto-start skipped — server '${server.name}' points to remote host '${server.host}'. ` +
         `Start OpenCode manually on that machine.`,
     );
   }
@@ -73,7 +93,7 @@ export async function ensureOpencodeRunning(server: ServerEntry): Promise<void> 
   // On Windows, npm-installed binaries are .cmd wrappers; spawn needs the .cmd suffix.
   const cmd = process.platform === 'win32' ? 'opencode.cmd' : 'opencode';
 
-  console.error(`[Prefect] OpenCode not reachable on ${serverUrl} — spawning 'opencode serve --port ${port}'`);
+  console.error(`[Legate] OpenCode not reachable on ${serverUrl} — spawning 'opencode serve --port ${port}'`);
 
   const promise = (async () => {
     const child = spawn(cmd, ['serve', '--port', port], {
@@ -83,7 +103,7 @@ export async function ensureOpencodeRunning(server: ServerEntry): Promise<void> 
     });
     child.unref();
     await waitForHealth(serverUrl);
-    console.error(`[Prefect] OpenCode is healthy at ${serverUrl}`);
+    console.error(`[Legate] OpenCode is healthy at ${serverUrl}`);
   })().finally(() => {
     startPromises.delete(key);
   });
