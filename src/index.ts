@@ -12,16 +12,41 @@ import { createSession, runPrompt, getDiff } from './handlers.js';
 import { readRegistry } from './registry.js';
 import { addSession, lookupSession, removeSession, readSessionMap } from './sessions.js';
 
-// CORE-08: Base URL from PREFECT_SERVER_URL env var (OPENCODE_URL accepted with deprecation warning)
+// CORE-08: Base URL from LEGATE_SERVER_URL env var (LEGATE_SERVER_URL and OPENCODE_URL accepted with deprecation warnings)
+let warnedServerUrl = false;
+let warnedOpenCodeUrl = false;
 const BASE_URL =
-  process.env.PREFECT_SERVER_URL ??
+  process.env.LEGATE_SERVER_URL ??
+  (() => {
+    const old = process.env.PREFECT_SERVER_URL;
+    if (old && !warnedServerUrl) {
+      console.error('[Legate] PREFECT_SERVER_URL is deprecated, use LEGATE_SERVER_URL');
+      warnedServerUrl = true;
+    }
+    return old;
+  })() ??
   (() => {
     const old = process.env.OPENCODE_URL;
-    if (old) console.error('[Prefect] OPENCODE_URL is deprecated, use PREFECT_SERVER_URL');
+    if (old && !warnedOpenCodeUrl) {
+      console.error('[Legate] OPENCODE_URL is deprecated, use LEGATE_SERVER_URL');
+      warnedOpenCodeUrl = true;
+    }
     return old;
   })() ??
   'http://localhost:4096';
-const TIMEOUT_MS = parseInt(process.env.PREFECT_TIMEOUT_MS ?? '', 10) || 120_000;
+
+let warnedTimeoutMs = false;
+function resolveTimeoutMs(): number {
+  const legateVal = process.env.LEGATE_TIMEOUT_MS;
+  if (legateVal) return parseInt(legateVal, 10) || 120_000;
+  const old = process.env.PREFECT_TIMEOUT_MS;
+  if (old && !warnedTimeoutMs) {
+    console.error('[Legate] PREFECT_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
+    warnedTimeoutMs = true;
+  }
+  return parseInt(old ?? '', 10) || 120_000;
+}
+const TIMEOUT_MS = resolveTimeoutMs();
 
 // D-01..D-03: per-URL client cache. Replaces the single global client so the
 // MCP server can route tool calls to multiple OpenCode instances.
@@ -40,14 +65,14 @@ function getClient(serverUrl: string): ReturnType<typeof createOpencodeClient> {
 //   1. sessionId → sessions.json lookup → that session's server URL
 //   2. serverName (entry points only) → registry lookup by name
 //   3. no inputs → first entry in registry
-//   4. registry empty → BASE_URL (PREFECT_SERVER_URL env var)
+//   4. registry empty → BASE_URL (LEGATE_SERVER_URL env var)
 // D-07: unknown serverName throws with the exact message below.
 function resolveServerUrl(sessionId?: string, serverName?: string): string {
   if (sessionId) {
     const entry = lookupSession(sessionId);
     if (entry) return entry.url;
     throw new Error(
-      `Session '${sessionId}' not found in sessions.json. It may have been deleted or never created via prefect_create_session.`,
+      `Session '${sessionId}' not found in sessions.json. It may have been deleted or never created via legate_create_session.`,
     );
   }
   if (serverName) {
@@ -55,7 +80,7 @@ function resolveServerUrl(sessionId?: string, serverName?: string): string {
     const found = reg.servers.find((s) => s.name === serverName);
     if (!found) {
       throw new Error(
-        `Server '${serverName}' not found in registry. Run 'prefect list-servers' to see registered servers.`,
+        `Server '${serverName}' not found in registry. Run 'legate list-servers' to see registered servers.`,
       );
     }
     return `http://${found.host}:${found.port}`;
@@ -91,11 +116,11 @@ function serverNameForUrl(serverUrl: string, serverParam?: string): string {
 export { resolveDirectory };
 
 const packageVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
-const server = new McpServer({ name: 'prefect', version: packageVersion });
+const server = new McpServer({ name: 'legate', version: packageVersion });
 
 // CORE-01: Create a new OpenCode session
 server.registerTool(
-  'prefect_create_session',
+  'legate_create_session',
   {
     description: 'Create a new OpenCode coding session. Returns the Session object including the session id (ULID) used by all other tools. Pass directory to pin the session to a specific project root — required when OpenCode serves multiple projects from a single running instance.',
     inputSchema: z.object({
@@ -103,7 +128,7 @@ server.registerTool(
       parentID: z.string().optional().describe('Optional parent session ID — creates this session as a child of the given parent for hierarchy tracking.'),
       directory: z.string().optional().describe('Absolute path to the project root for this session. Defaults to the directory OpenCode was started from.'),
       server: z.string().min(1).optional().describe(
-        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+        "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
       ),
     }),
   },
@@ -127,11 +152,11 @@ server.registerTool(
 
 // CORE-07: Abort a running session
 server.registerTool(
-  'prefect_abort',
+  'legate_abort',
   {
     description: 'Abort a running OpenCode session. Returns true on success.',
     inputSchema: z.object({
-      sessionId: z.string().min(1).describe('Session ID returned from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID returned from legate_create_session'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
@@ -150,7 +175,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -170,12 +195,12 @@ server.registerTool(
 // OpenCode after we gave up on it). Response parts are validated against
 // PartSchema in handlers.ts:runPrompt and returned as a structured { info, parts } payload.
 server.registerTool(
-  'prefect_run',
+  'legate_run',
   {
     description:
       'Send a prompt to an OpenCode session and block until the agent finishes. Returns { info: AssistantMessage, parts: Part[] } as JSON. Optional model/agent/system override the session defaults for this single call. May take seconds to minutes depending on task complexity.',
     inputSchema: z.object({
-      sessionId: z.string().min(1).describe('Session ID from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
       directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
       // RUN-01: model override — both providerID AND modelID required together
@@ -206,7 +231,7 @@ server.registerTool(
         .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
       // RUN-07: message ID assignment (idempotency key for user message creation)
       messageID: z.string().optional()
-        .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use prefect_fork instead.'),
+        .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.'),
       // RUN-08: structured agent part input (distinct from the top-level agent string override)
       agentInput: z.object({
         type: z.literal('agent'),
@@ -237,7 +262,7 @@ server.registerTool(
       const result = await runPrompt(getClient(serverUrl), sessionId, prompt, { model: effectiveModel, agent, system, tools, files, messageID, agentInput, subtaskInput }, dir, controller.signal);
       clearTimeout(timer);
       // Grace delay: OpenCode's status map updates asynchronously after the stream closes.
-      // Poll for up to 2s so that a prefect_session_status call immediately after prefect_run
+      // Poll for up to 2s so that a legate_session_status call immediately after legate_run
       // returns sees idle rather than a stale busy.
       try {
         const graceDeadline = Date.now() + 2000;
@@ -256,7 +281,7 @@ server.registerTool(
           content: [
             {
               type: 'text',
-              text: `prefect_run timed out after ${TIMEOUT_MS / 1000}s — check PREFECT_SERVER_URL and model endpoint`,
+              text: `legate_run timed out after ${TIMEOUT_MS / 1000}s — check LEGATE_SERVER_URL and model endpoint`,
             },
           ],
           isError: true,
@@ -274,7 +299,7 @@ server.registerTool(
           content: [{ type: 'text', text:
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
           }], isError: true,
         };
       }
@@ -284,16 +309,16 @@ server.registerTool(
 );
 
 // RUN-04: Fire-and-forget prompt — POST /session/:id/prompt_async returns 204 void.
-// Same body shape as prefect_run (model/agent/system supported) but no timeout
-// because the API returns immediately. Use prefect_session_status to poll for
+// Same body shape as legate_run (model/agent/system supported) but no timeout
+// because the API returns immediately. Use legate_session_status to poll for
 // completion.
 server.registerTool(
-  'prefect_prompt_async',
+  'legate_prompt_async',
   {
     description:
-      'Send a prompt to an OpenCode session and return immediately without waiting for the agent to finish. Returns { sessionId, accepted: true } on success. Use prefect_session_status to poll for completion, then prefect_session_messages or prefect_get_diff to retrieve results.',
+      'Send a prompt to an OpenCode session and return immediately without waiting for the agent to finish. Returns { sessionId, accepted: true } on success. Use legate_session_status to poll for completion, then legate_session_messages or legate_get_diff to retrieve results.',
     inputSchema: z.object({
-      sessionId: z.string().min(1).describe('Session ID from prefect_create_session'),
+      sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
       directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
       model: z
@@ -321,7 +346,7 @@ server.registerTool(
         .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
       // RUN-07: message ID assignment (idempotency key for user message creation)
       messageID: z.string().optional()
-        .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use prefect_fork instead.'),
+        .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.'),
       // RUN-08: structured agent part input (distinct from the top-level agent string override)
       agentInput: z.object({
         type: z.literal('agent'),
@@ -369,7 +394,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -387,7 +412,7 @@ server.registerTool(
 
 // CORE-03: Get the file diff for a session (or for a specific message)
 server.registerTool(
-  'prefect_get_diff',
+  'legate_get_diff',
   {
     description: 'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session.',
     inputSchema: z.object({
@@ -415,7 +440,7 @@ server.registerTool(
           content: [{ type: 'text', text:
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
           }], isError: true,
         };
       }
@@ -428,7 +453,7 @@ server.registerTool(
 // NOTE: REQUIREMENTS.md says allow/deny/allow_always — that's WRONG.
 // The OpenCode API enum is "once" | "always" | "reject" (verified from @opencode-ai/sdk types).
 server.registerTool(
-  'prefect_approve_permission',
+  'legate_approve_permission',
   {
     description: 'Respond to an OpenCode permission request. once = approve this request only; always = approve similar future requests; reject = deny.',
     inputSchema: z.object({
@@ -457,7 +482,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -471,7 +496,7 @@ server.registerTool(
 
 // CORE-05: Fork a session (escape hatch for corrupted sessions)
 server.registerTool(
-  'prefect_fork',
+  'legate_fork',
   {
     description: 'Fork an OpenCode session, optionally at a specific message. Returns a new Session. Use this as an escape hatch when a session has gone off the rails.',
     inputSchema: z.object({
@@ -498,13 +523,13 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${sourceEntry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
       }
       // Persist the forked session so subsequent tool calls can route to the same server.
-      // Store parentId so prefect_session_children can find fork-created children locally.
+      // Store parentId so legate_session_children can find fork-created children locally.
       if (data && sourceEntry) {
         addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId });
       }
@@ -517,7 +542,7 @@ server.registerTool(
 
 // CORE-06: Revert a session to a prior message
 server.registerTool(
-  'prefect_revert',
+  'legate_revert',
   {
     description: 'Revert an OpenCode session to a prior message. messageID is required. Optionally scope to a specific part of that message via partID.',
     inputSchema: z.object({
@@ -543,7 +568,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -557,7 +582,7 @@ server.registerTool(
 
 // SESSION-01: List all OpenCode sessions
 server.registerTool(
-  'prefect_session_list',
+  'legate_session_list',
   {
     description: 'List all OpenCode sessions. Returns an array of Session objects each with id, title, directory, time.created, time.updated, and optional summary/share/revert fields. Pass directory to filter sessions by project root.',
     inputSchema: z.object({
@@ -581,7 +606,7 @@ server.registerTool(
 
 // SESSION-02: Fetch a single OpenCode session by ID
 server.registerTool(
-  'prefect_session_get',
+  'legate_session_get',
   {
     description: 'Fetch a single OpenCode session by ID. Returns the full Session object including id, title, directory, parentID (if forked), and revert state.',
     inputSchema: z.object({
@@ -604,7 +629,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -621,7 +646,7 @@ server.registerTool(
 // setups — without it, the default server would always be queried regardless of
 // which server owns the session.
 server.registerTool(
-  'prefect_session_status',
+  'legate_session_status',
   {
     description: 'Get the real-time status of active OpenCode sessions. Returns a map of sessionID → SessionStatus where status is one of: { type: "idle" }, { type: "busy" }, or { type: "retry", attempt, message, next }. Pass sessionId to scope the result to one session and route to the correct server (required when multiple servers are registered).',
     inputSchema: z.object({
@@ -638,7 +663,7 @@ server.registerTool(
       });
       if (error) throw new Error(JSON.stringify(error));
       if (sessionId) {
-        // Return just the requested session; treat missing-from-map as idle (consistent with prefect_await)
+        // Return just the requested session; treat missing-from-map as idle (consistent with legate_await)
         const entry = (data as Record<string, unknown>)[sessionId] ?? { type: 'idle' };
         return { content: [{ type: 'text', text: JSON.stringify({ [sessionId]: entry }) }] };
       }
@@ -651,7 +676,7 @@ server.registerTool(
 
 // SESSION-04: Retrieve message history for a session (limit = most-recent-N, no cursor)
 server.registerTool(
-  'prefect_session_messages',
+  'legate_session_messages',
   {
     description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages.',
     inputSchema: z.object({
@@ -677,7 +702,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -691,7 +716,7 @@ server.registerTool(
 
 // SESSION-05: Fetch a single message by ID within a session
 server.registerTool(
-  'prefect_session_message',
+  'legate_session_message',
   {
     description: 'Fetch a single message by ID within an OpenCode session. Returns the message info and all its parts (TextPart, ToolPart, PatchPart, etc.).',
     inputSchema: z.object({
@@ -715,7 +740,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -729,9 +754,9 @@ server.registerTool(
 
 // SESSION-06: Delete a session permanently (irreversible)
 server.registerTool(
-  'prefect_session_delete',
+  'legate_session_delete',
   {
-    description: 'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using prefect_session_rename to archive instead of deleting.',
+    description: 'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using legate_session_rename to archive instead of deleting.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to delete'),
       directory: z.string().optional().describe('Optional directory filter'),
@@ -752,7 +777,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -767,7 +792,7 @@ server.registerTool(
 
 // SESSION-07: Rename a session — MCP tool is "rename" but SDK method is client.session.update()
 server.registerTool(
-  'prefect_session_rename',
+  'legate_session_rename',
   {
     description: 'Rename an OpenCode session. Returns the full updated Session object.',
     inputSchema: z.object({
@@ -792,7 +817,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -806,9 +831,9 @@ server.registerTool(
 
 // SESSION-08: List child sessions forked from a parent session
 server.registerTool(
-  'prefect_session_children',
+  'legate_session_children',
   {
-    description: 'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use prefect_fork to create child sessions.',
+    description: 'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use legate_fork to create child sessions.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Parent session ID — the session that child forks were created from (not a child session ID)'),
       directory: z.string().optional().describe('Optional directory filter'),
@@ -829,7 +854,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -853,9 +878,9 @@ server.registerTool(
 
 // SESSION-09: Undo a prior revert — NO body (SessionUnrevertData.body is typed never)
 server.registerTool(
-  'prefect_session_unrevert',
+  'legate_session_unrevert',
   {
-    description: 'Restore all messages removed by a prior prefect_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
+    description: 'Restore all messages removed by a prior legate_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to unrevert — must have been previously reverted'),
       directory: z.string().optional().describe('Optional directory filter'),
@@ -877,7 +902,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -890,13 +915,13 @@ server.registerTool(
 );
 
 // CMD-01: Run a slash command inside an OpenCode session (e.g. /compact, /clear).
-// Calls POST /session/:id/command. Same response shape as prefect_run:
+// Calls POST /session/:id/command. Same response shape as legate_run:
 // { info: AssistantMessage, parts: Part[] }. Note that `model` here is a plain
 // string (e.g. "anthropic/claude-3-5-sonnet"), NOT a { providerID, modelID }
 // object — this is deliberate; the OpenCode command endpoint accepts a single
 // model string, unlike the prompt endpoint.
 server.registerTool(
-  'prefect_session_command',
+  'legate_session_command',
   {
     description:
       'Run a slash command inside an OpenCode session (e.g. compact, clear). Returns { info: AssistantMessage, parts: Part[] } as JSON. Use this for session-level operations that have no equivalent SDK method.',
@@ -935,7 +960,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -943,7 +968,7 @@ server.registerTool(
       if (!data) throw new Error('Session command returned no data');
       const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
       if (!cmdParseResult.success) {
-        console.error('PartSchema validation warning (prefect_session_command):', cmdParseResult.error.message);
+        console.error('PartSchema validation warning (legate_session_command):', cmdParseResult.error.message);
       }
       const cmdParts = cmdParseResult.success ? cmdParseResult.data : (data as { parts?: unknown }).parts;
       return { content: [{ type: 'text', text: JSON.stringify({ info: (data as { info?: unknown }).info, parts: cmdParts }) }] };
@@ -958,15 +983,15 @@ server.registerTool(
 // On timeout: aborts the session and returns isError:true (D-05).
 // Session kept alive after completion — caller decides when to delete (D-06).
 server.registerTool(
-  'prefect_delegate',
+  'legate_delegate',
   {
     description:
       'Blocking composite: run a prompt and return { sessionId, result, diff } in one call. ' +
       'When sessionId is provided: reuses that existing session (server/title/directory ignored). ' +
-      'When omitted: creates a new session on the named server (server defaults to first registered or PREFECT_SERVER_URL). ' +
-      'Session stays alive after completion — call prefect_session_delete to clean up. ' +
-      'On timeout (PREFECT_TIMEOUT_MS exceeded): aborts the in-flight run (both new and reused sessions) and returns isError:true — session itself is kept alive. ' +
-      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use prefect_create_session + prefect_run directly for those features.',
+      'When omitted: creates a new session on the named server (server defaults to first registered or LEGATE_SERVER_URL). ' +
+      'Session stays alive after completion — call legate_session_delete to clean up. ' +
+      'On timeout (LEGATE_TIMEOUT_MS exceeded): aborts the in-flight run (both new and reused sessions) and returns isError:true — session itself is kept alive. ' +
+      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use legate_create_session + legate_run directly for those features.',
     inputSchema: z.object({
       sessionId: z.string().optional().describe(
         'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
@@ -981,7 +1006,7 @@ server.registerTool(
       agent: z.string().optional().describe('Override the agent for this call.'),
       system: z.string().optional().describe('Override the system prompt for this call.'),
       server: z.string().min(1).optional().describe(
-        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+        "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
       ),
     }),
   },
@@ -995,7 +1020,7 @@ server.registerTool(
       if (!sessionEntry) {
         clearTimeout(timer);
         return {
-          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call prefect_session_list to see active sessions.` }],
+          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.` }],
           isError: true,
         };
       }
@@ -1011,7 +1036,7 @@ server.registerTool(
         if ((err as Error).name === 'AbortError') {
           try { await getClient(sessionEntry.url).session.abort({ path: { id: providedSessionId } }); } catch { /* swallow */ }
           return {
-            content: [{ type: 'text', text: `prefect_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted` }],
+            content: [{ type: 'text', text: `legate_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted` }],
             isError: true,
           };
         }
@@ -1045,7 +1070,7 @@ server.registerTool(
           try { await getClient(resolveServerUrl(sessionId)).session.abort({ path: { id: sessionId } }); } catch { /* swallow */ }
         }
         return {
-          content: [{ type: 'text', text: `prefect_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}` }],
+          content: [{ type: 'text', text: `legate_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}` }],
           isError: true,
         };
       }
@@ -1055,17 +1080,17 @@ server.registerTool(
 );
 
 // WORKFLOW-03: Non-blocking composite — createSession → promptAsync → return { sessionId }.
-// Returns immediately; session runs in background. Use prefect_await or
-// prefect_inspect to track progress. Same model/agent/system fields as prefect_run.
+// Returns immediately; session runs in background. Use legate_await or
+// legate_inspect to track progress. Same model/agent/system fields as legate_run.
 server.registerTool(
-  'prefect_dispatch',
+  'legate_dispatch',
   {
     description:
       'Non-blocking composite: fire a prompt asynchronously and return { sessionId } immediately — the agent runs in the background. ' +
       'When sessionId is provided: reuses that existing session (server/title/directory ignored). ' +
-      'When omitted: creates a new session on the named server (server defaults to first registered or PREFECT_SERVER_URL). ' +
-      'Use prefect_await to poll for completion or prefect_inspect to check status. ' +
-      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use prefect_create_session + prefect_prompt_async directly for those features.',
+      'When omitted: creates a new session on the named server (server defaults to first registered or LEGATE_SERVER_URL). ' +
+      'Use legate_await to poll for completion or legate_inspect to check status. ' +
+      'Note: does not support tools/files/messageID/agentInput/subtaskInput — use legate_create_session + legate_prompt_async directly for those features.',
     inputSchema: z.object({
       sessionId: z.string().optional().describe(
         'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
@@ -1080,7 +1105,7 @@ server.registerTool(
       agent: z.string().optional().describe('Override the agent for this call.'),
       system: z.string().optional().describe('Override the system prompt for this call.'),
       server: z.string().min(1).optional().describe(
-        "Named server from registry (prefect list-servers). Omit to use the first registered server or PREFECT_SERVER_URL."
+        "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
       ),
     }),
   },
@@ -1090,7 +1115,7 @@ server.registerTool(
       const sessionEntry = lookupSession(providedSessionId);
       if (!sessionEntry) {
         return {
-          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call prefect_session_list to see active sessions.` }],
+          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.` }],
           isError: true,
         };
       }
@@ -1113,7 +1138,7 @@ server.registerTool(
             throw new Error(
               `Session ${providedSessionId} not found on server '${entry?.server ?? 'unknown'}' (${entry?.url ?? serverUrl}).\n` +
               `The session may have been deleted or the server restarted.\n` +
-              `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+              `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
             );
           }
           throw new Error(JSON.stringify(error));
@@ -1159,10 +1184,10 @@ server.registerTool(
 // session.todo() (requires path.id), session.diff() (mapped to { file, additions, deletions }
 // only — no patch content per D-10).
 server.registerTool(
-  'prefect_inspect',
+  'legate_inspect',
   {
     description:
-      'Return a compact snapshot { status, todos, changedFiles } for a session. Faster than fetching full message history. changedFiles contains { file, additions, deletions } — use prefect_get_diff for full patch content.',
+      'Return a compact snapshot { status, todos, changedFiles } for a session. Faster than fetching full message history. changedFiles contains { file, additions, deletions } — use legate_get_diff for full patch content.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to inspect'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
@@ -1186,7 +1211,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
       }
@@ -1214,14 +1239,14 @@ server.registerTool(
 // Undefined status entry (session not in map) is treated as idle — OpenCode may have
 // already completed and removed the session from the status map before first poll.
 server.registerTool(
-  'prefect_await',
+  'legate_await',
   {
     description:
-      'Poll a dispatched session until it reaches idle state, then return { result: { info, parts }, diff }. Use after prefect_dispatch. Accepts pollIntervalMs (default 2000) and timeoutMs (default PREFECT_TIMEOUT_MS).',
+      'Poll a dispatched session until it reaches idle state, then return { result: { info, parts }, diff }. Use after legate_dispatch. Accepts pollIntervalMs (default 2000) and timeoutMs (default LEGATE_TIMEOUT_MS).',
     inputSchema: z.object({
-      sessionId: z.string().min(1).describe('Session ID from prefect_dispatch'),
+      sessionId: z.string().min(1).describe('Session ID from legate_dispatch'),
       pollIntervalMs: z.number().int().positive().optional().describe('Milliseconds between status polls. Default: 2000.'),
-      timeoutMs: z.number().int().positive().optional().describe('Maximum milliseconds to wait. Default: PREFECT_TIMEOUT_MS env var (default 120000).'),
+      timeoutMs: z.number().int().positive().optional().describe('Maximum milliseconds to wait. Default: LEGATE_TIMEOUT_MS env var (default 120000).'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
     }),
   },
@@ -1249,7 +1274,7 @@ server.registerTool(
             if (!msgResult.error && Array.isArray(msgResult.data) && msgResult.data.length > 0) {
               const lastMsg = msgResult.data[msgResult.data.length - 1] as { info: { role?: string } };
               if ((lastMsg.info as { role?: string }).role === 'assistant') {
-                console.error(`[Prefect] prefect_await: breaking on stale busy — last message is assistant after ${staleBusyCount} busy polls (session ${sessionId})`);
+                console.error(`[Legate] legate_await: breaking on stale busy — last message is assistant after ${staleBusyCount} busy polls (session ${sessionId})`);
                 break;
               }
             }
@@ -1260,7 +1285,7 @@ server.registerTool(
         }
         if (Date.now() >= deadline) {
           return {
-            content: [{ type: 'text', text: JSON.stringify({ error: `prefect_await timed out after ${timeoutMs}ms`, sessionId }) }],
+            content: [{ type: 'text', text: JSON.stringify({ error: `legate_await timed out after ${timeoutMs}ms`, sessionId }) }],
             isError: true,
           };
         }
@@ -1278,21 +1303,21 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(messagesResult.error));
       }
-      // D-12: find last assistant message — same shape as prefect_run result
+      // D-12: find last assistant message — same shape as legate_run result
       const msgs = messagesResult.data ?? [];
       const last = [...msgs].reverse().find((m) => (m.info as { role?: string }).role === 'assistant');
-      if (!last) throw new Error('prefect_await: no assistant message found in session after idle');
+      if (!last) throw new Error('legate_await: no assistant message found in session after idle');
       const awaitParseResult = PartSchema.array().safeParse(last.parts);
       if (!awaitParseResult.success) {
-        console.error('PartSchema validation warning (prefect_await):', awaitParseResult.error.message);
+        console.error('PartSchema validation warning (legate_await):', awaitParseResult.error.message);
       }
       const validatedParts = awaitParseResult.success ? awaitParseResult.data : (last.parts as unknown[]);
-      // D-13: return shape matches prefect_delegate for easy substitution
+      // D-13: return shape matches legate_delegate for easy substitution
       return { content: [{ type: 'text', text: JSON.stringify({ result: { info: last.info, parts: validatedParts }, diff }) }] };
     } catch (err) {
       // D-12 stale-session detection inside the JSON-encoded error string from getDiff
@@ -1307,7 +1332,7 @@ server.registerTool(
           content: [{ type: 'text', text:
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
           }], isError: true,
         };
       }
@@ -1318,9 +1343,9 @@ server.registerTool(
 
 // API-01: List OpenCode agents (Phase 8)
 server.registerTool(
-  'prefect_list_agents',
+  'legate_list_agents',
   {
-    description: 'List the agents available in the connected OpenCode instance. Returns Array<{ name, description?, mode }>. Use the returned name (e.g. "build", "general") as the agent param when calling prefect_run. Pass directory to scope to a specific project root.',
+    description: 'List the agents available in the connected OpenCode instance. Returns Array<{ name, description?, mode }>. Use the returned name (e.g. "build", "general") as the agent param when calling legate_run. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
@@ -1347,9 +1372,9 @@ server.registerTool(
 
 // API-02: List OpenCode providers and their models (Phase 8)
 server.registerTool(
-  'prefect_list_providers',
+  'legate_list_providers',
   {
-    description: 'List the providers configured in the connected OpenCode instance and their available models. Returns Array<{ id, name, models: Array<{ id, name }> }>. Use returned provider.id + model.id as providerID/modelID params for prefect_run. Pass directory to scope to a specific project root.',
+    description: 'List the providers configured in the connected OpenCode instance and their available models. Returns Array<{ id, name, models: Array<{ id, name }> }>. Use returned provider.id + model.id as providerID/modelID params for legate_run. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
     }),
@@ -1376,7 +1401,7 @@ server.registerTool(
 
 // API-03: Find workspace symbols by query (Phase 8)
 server.registerTool(
-  'prefect_find_symbol',
+  'legate_find_symbol',
   {
     description: 'Search the OpenCode workspace for symbols matching a query string (e.g. function or class names). Returns Array<{ name, kind, path, range }> where path is project-root-relative when a directory is resolved (via directory param or OPENCODE_DEFAULT_PROJECT), absolute otherwise. kind is the LSP SymbolKind number.',
     inputSchema: z.object({
@@ -1413,14 +1438,14 @@ server.registerTool(
 
 // SESSION-11: Trigger session summary generation
 server.registerTool(
-  'prefect_session_summarize',
+  'legate_session_summarize',
   {
     description: 'Trigger summary generation for an OpenCode session. Returns true when the summarization was accepted. providerID and modelID are required — the endpoint has no default fallback. providerID must match a provider configured in the OpenCode server (e.g. "vllm" or "anthropic"); using an unconfigured provider returns ProviderModelNotFoundError.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID'),
       providerID: z.string().describe('Required. Provider ID for summarization — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
       modelID: z.string().describe('Required. Model ID for summarization. Must be available under the specified providerID.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, providerID, modelID, directory }) => {
@@ -1439,7 +1464,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1453,12 +1478,12 @@ server.registerTool(
 
 // SESSION-12: Get the current todo list for a session
 server.registerTool(
-  'prefect_session_todo',
+  'legate_session_todo',
   {
     description: 'Get the current todo list for an OpenCode session. Returns Array<{ id, content, status, priority }> where status is one of pending/in_progress/completed/cancelled and priority is high/medium/low.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
@@ -1476,7 +1501,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1490,18 +1515,18 @@ server.registerTool(
 
 // SESSION-13: Generate AGENTS.md for the session's project (with existence guard)
 server.registerTool(
-  'prefect_session_init',
+  'legate_session_init',
   {
     description: `Initialize AGENTS.md for the session's project. Use this decision flow:
 
-1. Call prefect_session_init (no force).
+1. Call legate_session_init (no force).
    - AGENTS.md absent → endpoint called, model generates AGENTS.md. Returns { existed: false, accepted: true }.
    - AGENTS.md exists → endpoint NOT called. Returns { existed: true, content: "<current content>" }.
 
 2. If existed: true, read the returned content and decide:
    - Content is good → use as-is, skip further init.
-   - Needs additions → augment directly via file write or prefect_run prompt.
-   - Needs full re-initialization → call prefect_session_init({ force: true }).
+   - Needs additions → augment directly via file write or legate_run prompt.
+   - Needs full re-initialization → call legate_session_init({ force: true }).
 
 3. force: true always calls the endpoint. OpenCode rewrites AGENTS.md using model judgment — it preserves sections it deems worth keeping and drops others. Custom or hand-authored content can be lost. Returns { existed: <bool>, accepted: true }.
 
@@ -1513,7 +1538,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       providerID: z.string().describe('Required. Provider ID — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
       modelID: z.string().describe('Required. Model ID. Must be available under the specified providerID.'),
       messageID: z.string().describe('Required. The ID assigned to the new user message created by this call. Must start with "msg" (e.g. "msg_" + Date.now(), or "msg" + a random suffix). UUID format is rejected. Not a reference to an existing message.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       force: z.boolean().optional().describe('Skip the existence guard and always call the endpoint. OpenCode will rewrite AGENTS.md — custom content can be lost. Use when explicitly re-initializing.'),
     }),
   },
@@ -1546,7 +1571,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1558,7 +1583,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         return {
           content: [{
             type: 'text',
-            text: `prefect_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
+            text: `legate_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
               `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
               `Check whether AGENTS.md was created in the project directory anyway.`,
           }],
@@ -1572,12 +1597,12 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
 
 // SESSION-15: Make a session publicly shareable
 server.registerTool(
-  'prefect_session_share',
+  'legate_session_share',
   {
     description: 'Make an OpenCode session publicly shareable. Returns the full Session object — after sharing, the share URL is available at session.share.url in the returned Session.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to share'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
@@ -1595,7 +1620,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1609,12 +1634,12 @@ server.registerTool(
 
 // SESSION-16: Remove sharing from a session
 server.registerTool(
-  'prefect_session_unshare',
+  'legate_session_unshare',
   {
     description: 'Remove public sharing from an OpenCode session. Returns the updated Session object with the share field cleared (session.share will be absent/undefined).',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to unshare'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, directory }) => {
@@ -1632,7 +1657,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1644,13 +1669,13 @@ server.registerTool(
   }
 );
 
-// API-04: prefect_vcs_info — get VCS/git info for the workspace
+// API-04: legate_vcs_info — get VCS/git info for the workspace
 server.registerTool(
-  'prefect_vcs_info',
+  'legate_vcs_info',
   {
     description: 'Get VCS/git info for the OpenCode workspace. Returns { branch: string } with the current git branch name. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
@@ -1668,13 +1693,13 @@ server.registerTool(
   }
 );
 
-// API-05: prefect_file_status — get git-tracked file status for the workspace
+// API-05: legate_file_status — get git-tracked file status for the workspace
 server.registerTool(
-  'prefect_file_status',
+  'legate_file_status',
   {
     description: 'Get git-tracked file status for the OpenCode workspace. Returns Array<{ path: string, added: number, removed: number, status: "added"|"deleted"|"modified" }>. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
@@ -1692,13 +1717,13 @@ server.registerTool(
   }
 );
 
-// API-06: prefect_list_mcp_servers — list MCP servers configured in OpenCode
+// API-06: legate_list_mcp_servers — list MCP servers configured in OpenCode
 server.registerTool(
-  'prefect_list_mcp_servers',
+  'legate_list_mcp_servers',
   {
     description: 'List the MCP servers configured in the connected OpenCode instance. Returns { [serverName: string]: McpStatus } where McpStatus has a status field of "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration". Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
@@ -1716,13 +1741,13 @@ server.registerTool(
   }
 );
 
-// API-11: prefect_get_config — get the current OpenCode configuration
+// API-11: legate_get_config — get the current OpenCode configuration
 server.registerTool(
-  'prefect_get_config',
+  'legate_get_config',
   {
     description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. Pass directory to scope to a specific project root. WARNING: response may include sensitive values (API keys, tokens) from the OpenCode config. Do not log or display raw output in shared environments.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
@@ -1741,13 +1766,13 @@ server.registerTool(
   }
 );
 
-// API-12: prefect_list_commands — list available slash commands
+// API-12: legate_list_commands — list available slash commands
 server.registerTool(
-  'prefect_list_commands',
+  'legate_list_commands',
   {
-    description: 'List available slash commands in the OpenCode instance. Returns Array<{ name: string, description?: string, agent?: string, model?: string, template: string, subtask?: boolean }>. Complements prefect_session_command which executes a named command. Pass directory to scope to a specific project root.',
+    description: 'List available slash commands in the OpenCode instance. Returns Array<{ name: string, description?: string, agent?: string, model?: string, template: string, subtask?: boolean }>. Complements legate_session_command which executes a named command. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ directory }) => {
@@ -1765,9 +1790,9 @@ server.registerTool(
   }
 );
 
-// SESSION-14: prefect_session_shell — execute a shell command in a session context
+// SESSION-14: legate_session_shell — execute a shell command in a session context
 server.registerTool(
-  'prefect_session_shell',
+  'legate_session_shell',
   {
     description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Prefect layer. sessionId, agent, and command are all required. model override is optional.',
     inputSchema: z.object({
@@ -1778,7 +1803,7 @@ server.registerTool(
         providerID: z.string(),
         modelID: z.string(),
       }).optional().describe('Optional model override. Both providerID and modelID required together if provided.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, command, agent, model, directory }) => {
@@ -1801,7 +1826,7 @@ server.registerTool(
           throw new Error(
             `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
             `The session may have been deleted or the server restarted.\n` +
-            `Call prefect_session_list to see active sessions, or prefect_create_session to start a new one.`,
+            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
         throw new Error(JSON.stringify(error));
@@ -1813,9 +1838,9 @@ server.registerTool(
   }
 );
 
-// API-07: prefect_inject_mcp_server — add an MCP server to OpenCode at runtime
+// API-07: legate_inject_mcp_server — add an MCP server to OpenCode at runtime
 server.registerTool(
-  'prefect_inject_mcp_server',
+  'legate_inject_mcp_server',
   {
     description: 'Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
     inputSchema: z.object({
@@ -1827,17 +1852,17 @@ server.registerTool(
       headers: z.record(z.string(), z.string()).optional().describe('Optional HTTP headers for remote MCP server requests'),
       enabled: z.boolean().optional().describe('Whether to enable this MCP server. Defaults to true.'),
       timeout: z.number().int().positive().optional().describe('Timeout in ms for fetching tools from the MCP server (local only). Default: 5000.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ name, configType, commandArgs, environment, url, headers, enabled, timeout, directory }) => {
     const dir = resolveDirectory(directory);
     try {
       if (configType === 'local' && (!commandArgs || commandArgs.length === 0)) {
-        throw new Error('prefect_inject_mcp_server: commandArgs is required when configType is "local"');
+        throw new Error('legate_inject_mcp_server: commandArgs is required when configType is "local"');
       }
       if (configType === 'remote' && !url) {
-        throw new Error('prefect_inject_mcp_server: url is required when configType is "remote"');
+        throw new Error('legate_inject_mcp_server: url is required when configType is "remote"');
       }
       const config: import('@opencode-ai/sdk').McpLocalConfig | import('@opencode-ai/sdk').McpRemoteConfig =
         configType === 'local'
@@ -1867,22 +1892,22 @@ server.registerTool(
   }
 );
 
-// API-08: prefect_list_tools — list available tools per model (dual-endpoint)
+// API-08: legate_list_tools — list available tools per model (dual-endpoint)
 server.registerTool(
-  'prefect_list_tools',
+  'legate_list_tools',
   {
     description: 'List tools available in the OpenCode instance. When provider and model are both omitted, returns all tool IDs (Array<string>) via GET /experimental/tool/ids. When both provider and model are supplied, returns tool details (Array<{ id, description, parameters }>) for that specific model via GET /experimental/tool. Both provider and model are required together when using the detailed endpoint.',
     inputSchema: z.object({
       provider: z.string().optional().describe('Provider ID (e.g. "anthropic"). Required when model is provided.'),
       model: z.string().optional().describe('Model ID (e.g. "claude-sonnet-4-6"). Required when provider is provided.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ provider, model, directory }) => {
     const dir = resolveDirectory(directory);
     try {
       if ((provider && !model) || (!provider && model)) {
-        throw new Error('prefect_list_tools: provider and model must be supplied together; omit both for tool IDs only');
+        throw new Error('legate_list_tools: provider and model must be supplied together; omit both for tool IDs only');
       }
       const serverUrl = resolveServerUrl();
       if (provider && model) {
@@ -1910,15 +1935,15 @@ server.registerTool(
   }
 );
 
-// API-09: prefect_find_file — find files in the workspace by name or pattern
+// API-09: legate_find_file — find files in the workspace by name or pattern
 server.registerTool(
-  'prefect_find_file',
+  'legate_find_file',
   {
     description: 'Find files in the OpenCode workspace matching a query string. Returns Array<string> of matching file paths. Optionally include directories in results via dirs param. Pass directory to scope the search to a project root.',
     inputSchema: z.object({
       query: z.string().describe('Filename or pattern to search for'),
       dirs: z.enum(['true', 'false']).optional().describe('Whether to include directory paths in results. Defaults to "false". Must be the string "true" or "false", not a boolean.'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async (args) => {
@@ -1941,14 +1966,14 @@ server.registerTool(
   }
 );
 
-// API-10: prefect_get_file_content — get the content of a file in the workspace
+// API-10: legate_get_file_content — get the content of a file in the workspace
 server.registerTool(
-  'prefect_get_file_content',
+  'legate_get_file_content',
   {
     description: 'Get the content of a file in the OpenCode workspace. Returns { type: "text"|"binary", content: string, diff?, patch?, encoding?, mimeType? }. path is the file path — absolute or relative to directory if provided.',
     inputSchema: z.object({
       path: z.string().describe('File path to read (absolute, or relative to the directory param if provided)'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to PREFECT_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async (args) => {
