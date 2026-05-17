@@ -8,6 +8,17 @@ Prefect is a TypeScript MCP server that bridges Claude Code to a locally running
 
 Claude Code can delegate coding work to local models and review the result — keeping the orchestration context clean while local compute handles the edits.
 
+## Current Milestone: v2.2 Legate
+
+**Goal:** Rename the package from @momidala/prefect to @momidala/legate across all surfaces, add a condensed skill card installed via `legate init`, and update documentation.
+
+**Target features:**
+- Package, binary, tool names, and env vars renamed (prefect → legate)
+- Soft env var migration: LEGATE_* preferred, PREFECT_* warns and falls back
+- `legate init` installs ~/.claude/commands/legate.md (condensed reference card)
+- `legate init` installs ~/.claude/commands/legate-update.md (update command)
+- README updated for new name, binaries, env vars, and migration note
+
 ## Shipped: v2.1 Developer Experience — ✅ 2026-05-13
 
 Added self-update (npm lifecycle hooks + `/prefect-update` Claude command) and automatic checkpointing (AGENTS.md delivery; Handoff.md at agent context pressure).
@@ -29,7 +40,16 @@ Added self-update (npm lifecycle hooks + `/prefect-update` Claude command) and a
 
 ### Active
 
-*(none — planning next milestone)*
+- RENAME-01: Package name @momidala/prefect → @momidala/legate
+- RENAME-02: CLI binaries prefect → legate, prefect-mcp → legate-mcp
+- RENAME-03: All prefect_* tool names → legate_* in source, docs, examples
+- RENAME-04: PREFECT_* env vars → LEGATE_* with soft migration (warn on old)
+- SKILL-01: legate init installs ~/.claude/commands/legate.md (skill card)
+- SKILL-02: Skill card replaces verbose tool descriptions in Claude Code context
+- SKILL-03: Skill card includes canonical loop, workers, one-line tool descriptions
+- SKILL-04: legate init installs ~/.claude/commands/legate-update.md
+- SKILL-05: Skill files versioned; legate init overwrites on reinstall
+- DOC-01: README updated for new name, binaries, env vars, migration note
 
 ### Out of Scope
 
@@ -76,4 +96,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-13 after v2.1 milestone — all 10 requirements shipped. Self-update and checkpointing delivered. Ready for next milestone.*
+*Last updated: 2026-05-16 — v2.2 milestone started. Rename @momidala/prefect → @momidala/legate with skill card installation.*

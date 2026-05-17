@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.1
-milestone_name: Developer Experience
-status: archived
-stopped_at: v2.1 milestone archived
-last_updated: "2026-05-13T00:00:00.000Z"
-last_activity: 2026-05-13 -- v2.1 milestone archived
+milestone: v2.2
+milestone_name: Legate
+status: planning
+last_updated: "2026-05-17T03:24:12.952Z"
+last_activity: 2026-05-17
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 5
-  completed_plans: 5
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-05-13)
 
 ## Current Position
 
-Phase: —
+Phase: Not started (defining requirements)
 Plan: —
-Status: v2.1 archived — ready for next milestone
-Last activity: 2026-05-13
-
-Progress: [██████████] 100% — v2.1 complete
+Status: Defining requirements
+Last activity: 2026-05-17 — Milestone v2.2 started
 
 ## Deferred Items
 
