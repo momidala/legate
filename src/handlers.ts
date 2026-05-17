@@ -20,7 +20,7 @@ export interface RunPromptOptions {
 
 /**
  * Create a new OpenCode session.
- * Extracted from prefect_create_session handler in src/index.ts.
+ * Extracted from legate_create_session handler in src/index.ts.
  * Throws on API error.
  */
 export async function createSession(
@@ -61,9 +61,9 @@ export async function createSession(
 
 /**
  * Run a prompt against a session and return the assistant's structured response.
- * Extracted from prefect_run handler in src/index.ts.
+ * Extracted from legate_run handler in src/index.ts.
  * IMPORTANT: AbortError is NOT caught here — it propagates to the caller so
- * composite handlers (prefect_delegate) can detect timeout and call session.abort().
+ * composite handlers (legate_delegate) can detect timeout and call session.abort().
  * The caller is responsible for managing the AbortController and clearTimeout.
  */
 export async function runPrompt(
@@ -110,7 +110,7 @@ export async function runPrompt(
 
 /**
  * Get the file diff for a session with unified-diff patch strings.
- * Extracted from prefect_get_diff handler in src/index.ts.
+ * Extracted from legate_get_diff handler in src/index.ts.
  * Uses the API-provided patch when present (OpenCode ≥1.14.33); falls back to
  * createPatch(before, after) for older server versions that return before/after.
  * Throws on API error.

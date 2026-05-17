@@ -61,7 +61,7 @@ export async function fetchWithAuth(request: Request): Promise<Response> {
   if (reqUrl.protocol === 'http:' && reqUrl.hostname !== 'localhost' && reqUrl.hostname !== '127.0.0.1') {
     if (!_warnedRemoteHosts.has(reqUrl.hostname)) {
       _warnedRemoteHosts.add(reqUrl.hostname);
-      console.error(`[Prefect] Warning: routing requests to '${reqUrl.hostname}' over plain HTTP — credentials will be sent in cleartext. Use an SSH tunnel for remote servers.`);
+      console.error(`[Legate] Warning: routing requests to '${reqUrl.hostname}' over plain HTTP — credentials will be sent in cleartext. Use an SSH tunnel for remote servers.`);
     }
   }
   try {

@@ -14,13 +14,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // for direct CLI invocations, which is safe — commands will silently skip.
 const isGlobal = process.env.npm_config_global === 'true';
 
-// Template for the prefect entry written into .mcp.json mcpServers.prefect.
-// Global: use the prefect-mcp PATH bin (added as a second bin entry in package.json).
+// Template for the legate entry written into .mcp.json mcpServers.legate.
+// Global: use the legate-mcp PATH bin (added as a second bin entry in package.json).
 // Local: use node + absolute path so Claude Code can spawn from any cwd.
-const PREFECT_ENTRY = isGlobal
+const LEGATE_ENTRY = isGlobal
   ? {
       type: 'stdio',
-      command: 'prefect-mcp',
+      command: 'legate-mcp',
       args: [],
     } as const
   : {
@@ -29,17 +29,17 @@ const PREFECT_ENTRY = isGlobal
       args: [resolve(__dirname, 'index.js')],
     } as const;
 
-// Template for ~/.claude/commands/prefect-update.md (SELFUP-03, SELFUP-04, SELFUP-05).
-// Format: Claude Code slash command markdown — invoked as /prefect-update.
+// Template for ~/.claude/commands/legate-update.md (SELFUP-03, SELFUP-04, SELFUP-05).
+// Format: Claude Code slash command markdown — invoked as /legate-update.
 // The bash block updates the package (D-02), then displays the new version with restart prompt (D-03).
-const PREFECT_UPDATE_COMMAND_CONTENT = `Update the prefect package to the latest version, then confirm and prompt restart.
+const LEGATE_UPDATE_COMMAND_CONTENT = `Update the legate package to the latest version, then confirm and prompt restart.
 
 Run this bash command:
 
 \`\`\`bash
-npm install -g @momidala/prefect@latest && \\
-  NEW_VERSION=$(node --input-type=commonjs -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/prefect/package.json'));process.stdout.write(pkg.version);") && \\
-  echo "prefect updated to v$NEW_VERSION. Restart Claude Code to apply."
+npm install -g @momidala/legate@latest && \\
+  NEW_VERSION=$(node --input-type=commonjs -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/legate/package.json'));process.stdout.write(pkg.version);") && \\
+  echo "legate updated to v$NEW_VERSION. Restart Claude Code to apply."
 \`\`\`
 `;
 
@@ -79,14 +79,14 @@ function updateClaudemdWorkers(cwd: string): void {
 
 function usageAndExit(): never {
   console.error(
-    'Usage: prefect <subcommand> [options]\n\n' +
+    'Usage: legate <subcommand> [options]\n\n' +
     'Subcommands:\n' +
     '  init [--force]                          Write .mcp.json for this project\n' +
     '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
     '  remove-server <name>                    Remove a named server from the registry\n' +
     '  list-servers                            List all registered servers\n' +
-    '  install-command                         Install /prefect-update Claude command (global installs only)\n' +
-    '  uninstall-command                       Remove /prefect-update Claude command (global installs only)\n' +
+    '  install-command                         Install /legate-update Claude command (global installs only)\n' +
+    '  uninstall-command                       Remove /legate-update Claude command (global installs only)\n' +
     '  version                                 Print the installed version',
   );
   process.exit(1);
@@ -109,7 +109,7 @@ function handleAddServer(handlerArgs: string[]): never {
   }
   const [name, host, portStr, providerID, modelID] = positionalArgs;
   if (!name || !host || !portStr || !providerID || !modelID) {
-    console.error('Usage: prefect add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]');
+    console.error('Usage: legate add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]');
     process.exit(1);
   }
   const port = parseInt(portStr, 10);
@@ -126,7 +126,7 @@ function handleAddServer(handlerArgs: string[]): never {
 function handleRemoveServer(handlerArgs: string[]): never {
   const [name] = handlerArgs;
   if (!name) {
-    console.error('Usage: prefect remove-server <name>');
+    console.error('Usage: legate remove-server <name>');
     process.exit(1);
   }
   try {
@@ -149,18 +149,18 @@ function handleInstallCommand(): never {
   if (!isGlobal) process.exit(0);
 
   const destDir = join(homedir(), '.claude', 'commands');
-  const dest = join(destDir, 'prefect-update.md');
+  const dest = join(destDir, 'legate-update.md');
 
   try {
     // D-06: create ~/.claude/commands/ if it does not exist
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(dest, PREFECT_UPDATE_COMMAND_CONTENT);
+    writeFileSync(dest, LEGATE_UPDATE_COMMAND_CONTENT);
     if (!process.env.npm_lifecycle_event) {
-      console.error(`Installed /prefect-update command to ${dest}`);
+      console.error(`Installed /legate-update command to ${dest}`);
     }
   } catch (err) {
     // D-07: warn to stderr, exit 0 — broken command install must NEVER block npm install
-    console.error(`Warning: prefect-update command not installed — ${(err as Error).message}`);
+    console.error(`Warning: legate-update command not installed — ${(err as Error).message}`);
     process.exit(0);
   }
   process.exit(0);
@@ -170,7 +170,7 @@ function handleUninstallCommand(): never {
   // D-05: silent skip for non-global installs
   if (!isGlobal) process.exit(0);
 
-  const dest = join(homedir(), '.claude', 'commands', 'prefect-update.md');
+  const dest = join(homedir(), '.claude', 'commands', 'legate-update.md');
   try {
     // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
     rmSync(dest, { force: true });
@@ -185,9 +185,9 @@ function printOnboardingIfNoServers(): void {
   if (reg.servers.length === 0) {
     console.error(
       '\nNo servers registered yet. Register your first OpenCode server:\n' +
-      '  prefect add-server <name> <host> <port> <provider> <model>\n' +
+      '  legate add-server <name> <host> <port> <provider> <model>\n' +
       'Example:\n' +
-      '  prefect add-server local localhost 4096 ollama qwen2.5-coder'
+      '  legate add-server local localhost 4096 ollama qwen2.5-coder'
     );
   }
 }
@@ -212,10 +212,10 @@ switch (subcommand) {
     };
 
     if (!existsSync(mcpJsonPath)) {
-      // Case 1 (D-17): create fresh with only the prefect entry
-      const config: McpJson = { mcpServers: { prefect: PREFECT_ENTRY } };
+      // Case 1 (D-17): create fresh with only the legate entry
+      const config: McpJson = { mcpServers: { legate: LEGATE_ENTRY } };
       writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n');
-      console.error('Created .mcp.json with prefect entry');
+      console.error('Created .mcp.json with legate entry');
       printOnboardingIfNoServers();
       process.exit(0);
     }
@@ -231,18 +231,18 @@ switch (subcommand) {
 
     const servers = (existing.mcpServers ?? {}) as Record<string, unknown>;
 
-    if ('prefect' in servers && !force) {
+    if ('legate' in servers && !force) {
       // Case 3 (D-17): refuse without --force
-      console.error('Error: .mcp.json already contains a prefect entry. Use --force to overwrite.');
+      console.error('Error: .mcp.json already contains a legate entry. Use --force to overwrite.');
       process.exit(1);
     }
 
-    // Case 2 (no prefect key) or Case 4 (--force): set only the prefect key,
+    // Case 2 (no legate key) or Case 4 (--force): set only the legate key,
     // preserving all other servers and root-level keys.
-    servers.prefect = PREFECT_ENTRY;
+    servers.legate = LEGATE_ENTRY;
     existing.mcpServers = servers;
     writeFileSync(mcpJsonPath, JSON.stringify(existing, null, 2) + '\n');
-    console.error(force ? 'Updated prefect entry in .mcp.json' : 'Added prefect entry to .mcp.json');
+    console.error(force ? 'Updated legate entry in .mcp.json' : 'Added legate entry to .mcp.json');
     printOnboardingIfNoServers();
     process.exit(0);
   }

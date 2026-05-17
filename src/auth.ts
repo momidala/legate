@@ -4,10 +4,14 @@
 
 let warnedPassword = false;
 let warnedUsername = false;
+let warnedPrefectPassword = false;
+let warnedPrefectUsername = false;
 
 /**
- * Reads PREFECT_SERVER_PASSWORD and PREFECT_SERVER_USERNAME at call time.
- * Falls back to OPENCODE_SERVER_PASSWORD / OPENCODE_SERVER_USERNAME with a
+ * Reads LEGATE_SERVER_PASSWORD and LEGATE_SERVER_USERNAME at call time.
+ * Falls back to PREFECT_SERVER_PASSWORD / PREFECT_SERVER_USERNAME with a
+ * one-time deprecation warning per variable (RENAME-04).
+ * Falls back further to OPENCODE_SERVER_PASSWORD / OPENCODE_SERVER_USERNAME with a
  * one-time deprecation warning per variable (per D-04, D-05, D-07).
  * Returns { Authorization: 'Basic <token>' } if a password is set, otherwise {}.
  * Username defaults to 'opencode' per INFRA-05.
@@ -16,11 +20,19 @@ let warnedUsername = false;
  */
 export function buildAuthHeader(): Record<string, string> {
   const password =
-    process.env.PREFECT_SERVER_PASSWORD ??
+    process.env.LEGATE_SERVER_PASSWORD ??
+    (() => {
+      const prefect = process.env.PREFECT_SERVER_PASSWORD;
+      if (prefect && !warnedPrefectPassword) {
+        console.error('[Legate] PREFECT_SERVER_PASSWORD is deprecated, use LEGATE_SERVER_PASSWORD');
+        warnedPrefectPassword = true;
+      }
+      return prefect;
+    })() ??
     (() => {
       const old = process.env.OPENCODE_SERVER_PASSWORD;
       if (old && !warnedPassword) {
-        console.error('[Prefect] OPENCODE_SERVER_PASSWORD is deprecated, use PREFECT_SERVER_PASSWORD');
+        console.error('[Legate] OPENCODE_SERVER_PASSWORD is deprecated, use LEGATE_SERVER_PASSWORD');
         warnedPassword = true;
       }
       return old;
@@ -29,11 +41,19 @@ export function buildAuthHeader(): Record<string, string> {
   if (!password) return {};
 
   const username =
-    process.env.PREFECT_SERVER_USERNAME ??
+    process.env.LEGATE_SERVER_USERNAME ??
+    (() => {
+      const prefect = process.env.PREFECT_SERVER_USERNAME;
+      if (prefect && !warnedPrefectUsername) {
+        console.error('[Legate] PREFECT_SERVER_USERNAME is deprecated, use LEGATE_SERVER_USERNAME');
+        warnedPrefectUsername = true;
+      }
+      return prefect;
+    })() ??
     (() => {
       const old = process.env.OPENCODE_SERVER_USERNAME;
       if (old && !warnedUsername) {
-        console.error('[Prefect] OPENCODE_SERVER_USERNAME is deprecated, use PREFECT_SERVER_USERNAME');
+        console.error('[Legate] OPENCODE_SERVER_USERNAME is deprecated, use LEGATE_SERVER_USERNAME');
         warnedUsername = true;
       }
       return old;
@@ -46,7 +66,7 @@ export function buildAuthHeader(): Record<string, string> {
 
 /**
  * Authenticated fetch wrapper matching Config.fetch from @opencode-ai/sdk.
- * Injects Basic Auth headers when PREFECT_SERVER_PASSWORD is set.
+ * Injects Basic Auth headers when LEGATE_SERVER_PASSWORD is set.
  * Forwards the request unchanged when no password is configured.
  * Pass this to createOpencodeClient({ fetch: authFetch }) in src/index.ts.
  */
@@ -57,7 +77,7 @@ export async function authFetch(request: Request): Promise<Response> {
   }
   // Auth header always wins — we intentionally overwrite any pre-existing Authorization.
   if (request.headers.get('Authorization')) {
-    console.error('[Prefect] authFetch: overwriting existing Authorization header with Basic Auth');
+    console.error('[Legate] authFetch: overwriting existing Authorization header with Basic Auth');
   }
   const merged = { ...Object.fromEntries(request.headers), ...headers };
   const authed = new Request(request, { headers: merged });
@@ -68,4 +88,6 @@ export async function authFetch(request: Request): Promise<Response> {
 export function _resetWarnFlags(): void {
   warnedPassword = false;
   warnedUsername = false;
+  warnedPrefectPassword = false;
+  warnedPrefectUsername = false;
 }

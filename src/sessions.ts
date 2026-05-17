@@ -6,6 +6,13 @@ import { buildAuthHeader } from './auth.js';
 
 const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
 
+let warnedSessionTtl = false;
+
+/** @internal — test use only. Resets the deprecation warn flag so each test starts clean. */
+export function _resetWarnFlags(): void {
+  warnedSessionTtl = false;
+}
+
 export interface SessionEntry {
   server: string;  // name from registry (must match a ServerEntry.name in servers.json)
   url: string;     // full http://host:port URL — stored alongside name so error messages show both without re-lookup
@@ -28,9 +35,24 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
       throw new Error(`malformed sessions map at ${sessionsPath}: expected { sessions: { ... } }`);
     }
     const map = parsed as SessionMap;
-    // TTL pruning: remove entries older than PREFECT_SESSION_TTL_MS (default 24h).
+    // TTL pruning: remove entries older than LEGATE_SESSION_TTL_MS (default 24h).
     // Legacy entries without createdAt are kept (treated as non-expired).
-    const ttlMs = Number(process.env.PREFECT_SESSION_TTL_MS ?? DEFAULT_SESSION_TTL_MS);
+    let ttlMs: number;
+    const legateVal = process.env.LEGATE_SESSION_TTL_MS;
+    if (legateVal !== undefined) {
+      ttlMs = Number(legateVal);
+    } else {
+      const prefectVal = process.env.PREFECT_SESSION_TTL_MS;
+      if (prefectVal !== undefined) {
+        if (!warnedSessionTtl) {
+          console.error('[Legate] PREFECT_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
+          warnedSessionTtl = true;
+        }
+        ttlMs = Number(prefectVal);
+      } else {
+        ttlMs = DEFAULT_SESSION_TTL_MS;
+      }
+    }
     const now = Date.now();
     let pruned = false;
     for (const [id, entry] of Object.entries(map.sessions)) {
@@ -45,7 +67,7 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { sessions: {} };
     // Corrupt file — log warning and recover with empty map rather than crashing all tools
-    console.error(`[Prefect] Warning: sessions.json is corrupt and will be ignored: ${(err as Error).message}`);
+    console.error(`[Legate] Warning: sessions.json is corrupt and will be ignored: ${(err as Error).message}`);
     return { sessions: {} };
   }
 }
@@ -151,7 +173,7 @@ export async function atomicCheckAndAdd(
         if (pruned) writeSessionMap(map, sessionsPath);
         return (
           `Server '${entry.server}' is at capacity (${active}/${maxSessions} active sessions). ` +
-          `Delete an existing session with prefect_session_delete or choose a different server.`
+          `Delete an existing session with legate_session_delete or choose a different server.`
         );
       }
     }
