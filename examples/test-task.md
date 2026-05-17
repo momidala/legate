@@ -1,17 +1,17 @@
 # End-to-End Test Task: Validate Full Loop
 
-This task validates that the full Prefect loop works after setup. Run it once after a fresh setup to confirm `.mcp.json` is registered, OpenCode is reachable on `http://localhost:4096`, and the create -> run -> diff -> commit cycle produces a real diff in git history.
+This task validates that the full Legate loop works after setup. Run it once after a fresh setup to confirm `.mcp.json` is registered, OpenCode is reachable on `http://localhost:4096`, and the create -> run -> diff -> commit cycle produces a real diff in git history.
 
 ## Prerequisites
 
 Before running this task:
 1. `npm install && npm run build` has been run (otherwise the MCP server cannot start; `build/index.js` does not exist).
 2. `opencode serve --port 4096` is running **from the project root** in another terminal (verify: `curl http://localhost:4096/global/health` returns `{"healthy":true,...}`). OpenCode fixes its working directory at startup — sessions created from a wrong-directory server will write files there, not here.
-3. Claude Code has been opened in the project root and `/mcp` shows `prefect` as connected.
+3. Claude Code has been opened in the project root and `/mcp` shows `legate` as connected.
 
 ## The Prompt
 
-Send this exact prompt to OpenCode via `prefect_run`:
+Send this exact prompt to OpenCode via `legate_run`:
 
 > Create a file at `examples/hello.ts` that exports a function `greet(name: string): string` which returns `'Hello, ' + name + '!'`. At the bottom of the file, add the line: `console.log(greet('World'));`
 
@@ -21,30 +21,30 @@ This prompt is intentionally specified in full so the model has no ambiguity. Th
 
 Claude Code (or a human operator) executes the following 6 steps in order:
 
-1. **Create session.** Call `prefect_create_session` with `{title: "test-task"}`. Save the returned `id` as `SESSION_ID`.
-2. **Run prompt.** Call `prefect_run` with `{sessionId: SESSION_ID, prompt: <the prompt above>}`. Wait for it to return (up to 120 seconds — the default `PREFECT_TIMEOUT_MS`).
-3. **Get diff.** Call `prefect_get_diff` with `{sessionId: SESSION_ID}`. Confirm the returned array contains at least one `FileDiff` whose `file` field references `examples/hello.ts`. If the array is empty, the loop failed — re-run step 2 with a correction prompt or fork the session.
+1. **Create session.** Call `legate_create_session` with `{title: "test-task"}`. Save the returned `id` as `SESSION_ID`.
+2. **Run prompt.** Call `legate_run` with `{sessionId: SESSION_ID, prompt: <the prompt above>}`. Wait for it to return (up to 120 seconds — the default `LEGATE_TIMEOUT_MS`).
+3. **Get diff.** Call `legate_get_diff` with `{sessionId: SESSION_ID}`. Confirm the returned array contains at least one `FileDiff` whose `file` field references `examples/hello.ts`. If the array is empty, the loop failed — re-run step 2 with a correction prompt or fork the session.
 4. **Read file.** Read `examples/hello.ts` from disk. Confirm it contains the substring `greet` and a call to `console.log`.
-5. **Commit.** Run `git add examples/hello.ts && git commit -m "test: validate full prefect loop"`.
+5. **Commit.** Run `git add examples/hello.ts && git commit -m "test: validate full legate loop"`.
 6. **Done.** The diff is now in git history. The full loop works.
 
 ## Success Assertions
 
 The test passed if and only if ALL of these are true:
-- `prefect_get_diff` returned a non-empty array (at least 1 FileDiff entry).
+- `legate_get_diff` returned a non-empty array (at least 1 FileDiff entry).
 - At least one FileDiff has a `file` field that includes `hello.ts`.
 - `examples/hello.ts` exists on disk after step 4.
 - `examples/hello.ts` contains the substring `greet`.
-- `git log --oneline -1` after step 5 shows the commit message starting with `test: validate full prefect loop`.
+- `git log --oneline -1` after step 5 shows the commit message starting with `test: validate full legate loop`.
 
 ## Failure Modes
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| `/mcp` does not list prefect | Build missing or `.mcp.json` malformed | `npm run build`, restart Claude Code, check `.mcp.json` is valid JSON |
-| `prefect_create_session` fails with connection error | OpenCode not running or wrong port | Start `opencode serve --port 4096`; verify with `curl http://localhost:4096/global/health` |
-| `prefect_run` times out | Model is slow or task too large | Increase `PREFECT_TIMEOUT_MS` env var; for this task 120000ms is sufficient |
-| `prefect_get_diff` returns `[]` | OpenCode replied without writing files | Run step 2 again with a more explicit prompt; this exact prompt has been validated |
+| `/mcp` does not list legate | Build missing or `.mcp.json` malformed | `npm run build`, restart Claude Code, check `.mcp.json` is valid JSON |
+| `legate_create_session` fails with connection error | OpenCode not running or wrong port | Start `opencode serve --port 4096`; verify with `curl http://localhost:4096/global/health` |
+| `legate_run` times out | Model is slow or task too large | Increase `LEGATE_TIMEOUT_MS` env var; for this task 120000ms is sufficient |
+| `legate_get_diff` returns `[]` | OpenCode replied without writing files | Run step 2 again with a more explicit prompt; this exact prompt has been validated |
 
 ## After Success
 
@@ -58,10 +58,10 @@ Or keep it as a permanent example of OpenCode-generated output.
 
 ## Multi-Pass Delegation with sessionId
 
-Once you have a `SESSION_ID` from a previous `prefect_delegate` or `prefect_create_session` call, you can run follow-up prompts against the same session without creating a new one:
+Once you have a `SESSION_ID` from a previous `legate_delegate` or `legate_create_session` call, you can run follow-up prompts against the same session without creating a new one:
 
 ```
-prefect_delegate({ sessionId: SESSION_ID, prompt: "Now add a test for the greet function" })
+legate_delegate({ sessionId: SESSION_ID, prompt: "Now add a test for the greet function" })
 ```
 
 In reuse mode:
@@ -70,10 +70,10 @@ In reuse mode:
 - The response shape is identical: `{ sessionId, result, diff }`.
 - On timeout, the session is **not** aborted — the caller owns it.
 
-Similarly for `prefect_dispatch` — passing `sessionId` fires a background prompt on an existing session:
+Similarly for `legate_dispatch` — passing `sessionId` fires a background prompt on an existing session:
 
 ```
-prefect_dispatch({ sessionId: SESSION_ID, prompt: "Run the tests and fix any failures" })
+legate_dispatch({ sessionId: SESSION_ID, prompt: "Run the tests and fix any failures" })
 ```
 
-Use `prefect_await` or `prefect_inspect` to track progress as before.
+Use `legate_await` or `legate_inspect` to track progress as before.

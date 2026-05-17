@@ -1,4 +1,4 @@
-# Prefect
+# Legate
 
 A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code tools. Claude Code orchestrates at the task level (decompose, review, correct) while delegating actual file edits to a local model running in OpenCode. Diffs land in your working tree; you commit when ready.
 
@@ -12,66 +12,66 @@ A TypeScript MCP server that exposes OpenCode's headless HTTP API as Claude Code
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_create_session` | Start a new coding session (optional `server` param selects a named server from the registry) |
-| `prefect_run` | Send a prompt, block until the agent finishes |
-| `prefect_get_diff` | Inspect what OpenCode changed |
-| `prefect_fork` | Fork a session at a safe point (escape hatch for off-rails sessions) |
-| `prefect_revert` | Undo a single bad message |
-| `prefect_abort` | Stop a running session before timeout |
-| `prefect_approve_permission` | Respond to a permission request (emergency only) |
+| `legate_create_session` | Start a new coding session (optional `server` param selects a named server from the registry) |
+| `legate_run` | Send a prompt, block until the agent finishes |
+| `legate_get_diff` | Inspect what OpenCode changed |
+| `legate_fork` | Fork a session at a safe point (escape hatch for off-rails sessions) |
+| `legate_revert` | Undo a single bad message |
+| `legate_abort` | Stop a running session before timeout |
+| `legate_approve_permission` | Respond to a permission request (emergency only) |
 
 **Composite shortcuts** — collapse common multi-step patterns into one call:
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_delegate` | Blocking: create session + run prompt + return diff in one call (optional `server` param) |
-| `prefect_dispatch` | Non-blocking: create session + fire prompt, returns `sessionId` immediately (optional `server` param) |
-| `prefect_await` | Poll a dispatched session until idle, then return result + diff |
-| `prefect_inspect` | Compact snapshot `{ status, todos, changedFiles }` — faster than full message fetch |
-| `prefect_prompt_async` | Fire a prompt to an existing session without blocking |
+| `legate_delegate` | Blocking: create session + run prompt + return diff in one call (optional `server` param) |
+| `legate_dispatch` | Non-blocking: create session + fire prompt, returns `sessionId` immediately (optional `server` param) |
+| `legate_await` | Poll a dispatched session until idle, then return result + diff |
+| `legate_inspect` | Compact snapshot `{ status, todos, changedFiles }` — faster than full message fetch |
+| `legate_prompt_async` | Fire a prompt to an existing session without blocking |
 
 **Session management** — read and mutate session state:
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_session_list` | List all sessions, optionally filtered by project directory |
-| `prefect_session_get` | Fetch a single session by ID |
-| `prefect_session_status` | Real-time status map for all active sessions (idle / busy / retry) |
-| `prefect_session_messages` | Retrieve message history (with optional limit) |
-| `prefect_session_message` | Fetch a single message by ID |
-| `prefect_session_delete` | Permanently delete a session and its history |
-| `prefect_session_rename` | Rename a session |
-| `prefect_session_children` | List sessions forked from a given session |
-| `prefect_session_unrevert` | Undo a prior revert (restore removed messages) |
-| `prefect_session_command` | Run a slash command inside a session (e.g. `compact`) |
-| `prefect_session_summarize` | Trigger summary generation for a session |
-| `prefect_session_todo` | Get the current todo list for a session |
-| `prefect_session_init` | Initialize AGENTS.md for a session's project (**Note:** if AGENTS.md is staged for deletion in git (`D` in `git status`), the model may skip writing it — treating the git-deleted state as intentional. Ensure the file is either committed and present, or fully removed from both working tree and git index before calling.) |
-| `prefect_session_share` | Make a session publicly shareable |
-| `prefect_session_unshare` | Remove public sharing from a session |
-| `prefect_session_shell` | Execute an arbitrary shell command in a session's working directory |
+| `legate_session_list` | List all sessions, optionally filtered by project directory |
+| `legate_session_get` | Fetch a single session by ID |
+| `legate_session_status` | Real-time status map for all active sessions (idle / busy / retry) |
+| `legate_session_messages` | Retrieve message history (with optional limit) |
+| `legate_session_message` | Fetch a single message by ID |
+| `legate_session_delete` | Permanently delete a session and its history |
+| `legate_session_rename` | Rename a session |
+| `legate_session_children` | List sessions forked from a given session |
+| `legate_session_unrevert` | Undo a prior revert (restore removed messages) |
+| `legate_session_command` | Run a slash command inside a session (e.g. `compact`) |
+| `legate_session_summarize` | Trigger summary generation for a session |
+| `legate_session_todo` | Get the current todo list for a session |
+| `legate_session_init` | Initialize AGENTS.md for a session's project (**Note:** if AGENTS.md is staged for deletion in git (`D` in `git status`), the model may skip writing it — treating the git-deleted state as intentional. Ensure the file is either committed and present, or fully removed from both working tree and git index before calling.) |
+| `legate_session_share` | Make a session publicly shareable |
+| `legate_session_unshare` | Remove public sharing from a session |
+| `legate_session_shell` | Execute an arbitrary shell command in a session's working directory |
 
 **Discovery** — read-only inspection of the OpenCode workspace:
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_list_agents` | List available agents (name, description, mode) |
-| `prefect_list_providers` | List configured providers and their models |
-| `prefect_list_mcp_servers` | List MCP servers configured in the OpenCode instance |
-| `prefect_list_commands` | List available slash commands |
-| `prefect_list_tools` | List tools available in the OpenCode instance |
-| `prefect_find_symbol` | Search workspace for symbols matching a query (**EXPERIMENTAL** — returns `[]` in OpenCode ≤ 1.14.33; `workspace/symbol` LSP requests not yet implemented. Requires `"lsp": true` in `opencode.json` and `typescript-language-server` installed globally when it does work.) |
-| `prefect_find_file` | Find files matching a query string |
-| `prefect_get_file_content` | Read a file from the OpenCode workspace |
-| `prefect_get_config` | Get the full OpenCode configuration object |
-| `prefect_vcs_info` | Get VCS info (current branch) for the workspace |
-| `prefect_file_status` | Get git-tracked file status for the workspace |
+| `legate_list_agents` | List available agents (name, description, mode) |
+| `legate_list_providers` | List configured providers and their models |
+| `legate_list_mcp_servers` | List MCP servers configured in the OpenCode instance |
+| `legate_list_commands` | List available slash commands |
+| `legate_list_tools` | List tools available in the OpenCode instance |
+| `legate_find_symbol` | Search workspace for symbols matching a query (**EXPERIMENTAL** — returns `[]` in OpenCode ≤ 1.14.33; `workspace/symbol` LSP requests not yet implemented. Requires `"lsp": true` in `opencode.json` and `typescript-language-server` installed globally when it does work.) |
+| `legate_find_file` | Find files matching a query string |
+| `legate_get_file_content` | Read a file from the OpenCode workspace |
+| `legate_get_config` | Get the full OpenCode configuration object |
+| `legate_vcs_info` | Get VCS info (current branch) for the workspace |
+| `legate_file_status` | Get git-tracked file status for the workspace |
 
 **Infrastructure:**
 
 | Tool | Purpose |
 |------|---------|
-| `prefect_inject_mcp_server` | Add an MCP server to the OpenCode instance at runtime |
+| `legate_inject_mcp_server` | Add an MCP server to the OpenCode instance at runtime |
 
 Also included:
 - Project-scoped Claude Code registration (`.mcp.json`) so any clone of this repo automatically picks up the tools.
@@ -82,47 +82,47 @@ Also included:
 ### Option 1: Global install (recommended)
 
 ```bash
-npm install -g @momidala/prefect
+npm install -g @momidala/legate
 cd /your/project
-prefect init
+legate init
 ```
 
-`prefect init` auto-detects the global install and writes a `.mcp.json` entry:
+`legate init` auto-detects the global install and writes a `.mcp.json` entry:
 
 ```json
 {
   "mcpServers": {
-    "prefect": {
+    "legate": {
       "type": "stdio",
-      "command": "prefect-mcp",
+      "command": "legate-mcp",
       "args": []
     }
   }
 }
 ```
 
-Use `prefect init --force` to overwrite an existing `prefect` entry.
+Use `legate init --force` to overwrite an existing `legate` entry.
 
 ### Option 2: Local clone (development / contributing)
 
 ```bash
-git clone https://github.com/momidala/prefect.git
-cd prefect
+git clone https://github.com/momidala/legate.git
+cd legate
 npm install
 npm run build
 cd /your/project
-/path/to/prefect/build/cli.js init
+/path/to/legate/build/cli.js init
 ```
 
-`prefect init` (run from a local clone) detects that `npm_config_global` is not set and writes:
+`legate init` (run from a local clone) detects that `npm_config_global` is not set and writes:
 
 ```json
 {
   "mcpServers": {
-    "prefect": {
+    "legate": {
       "type": "stdio",
       "command": "node",
-      "args": ["/abs/path/to/prefect/build/index.js"]
+      "args": ["/abs/path/to/legate/build/index.js"]
     }
   }
 }
@@ -140,8 +140,8 @@ cd /your/project
 ### 1. Clone and build the MCP server
 
 ```bash
-git clone https://github.com/momidala/prefect.git
-cd prefect
+git clone https://github.com/momidala/legate.git
+cd legate
 npm install
 npm run build
 ```
@@ -156,10 +156,10 @@ The repo ships with `.mcp.json` at the project root that registers the MCP serve
 cat .mcp.json
 ```
 
-You should see the `prefect` server configured with `command: "node"` and `args: ["build/index.js"]`. If `.mcp.json` is missing or empty, recreate it with:
+You should see the `legate` server configured with `command: "node"` and `args: ["build/index.js"]`. If `.mcp.json` is missing or empty, recreate it with:
 
 ```bash
-claude mcp add --scope project prefect -- node build/index.js
+claude mcp add --scope project legate -- node build/index.js
 ```
 
 > Use `--scope project`, not `--scope local`. Local scope stores the config in `~/.claude.json` (user-only, not committed); project scope writes `.mcp.json` so all clones get it.
@@ -193,7 +193,7 @@ OpenCode's config lives at `~/.config/opencode/opencode.json`. Example for a loc
 }
 ```
 
-The `permission: allow` block is intentional — Prefect treats git as the safety net. If you want manual permission prompts, see `prefect_approve_permission` in `CLAUDE.md` (emergency tool).
+The `permission: allow` block is intentional — Legate treats git as the safety net. If you want manual permission prompts, see `legate_approve_permission` in `CLAUDE.md` (emergency tool).
 
 Auth file (placeholder is required even for local models):
 
@@ -206,11 +206,11 @@ Adjust the provider key (`vllm`) and path if you use Ollama, OpenAI, etc.
 
 ### 4. Start OpenCode headless
 
-Prefect auto-starts OpenCode on the first tool call if it isn't already running, so this step is optional for most setups. Auto-start spawns `opencode serve --port <N>` where `<N>` is the port from `PREFECT_SERVER_URL` (default 4096). The process is spawned in `PREFECT_DEFAULT_PROJECT` if set, otherwise in Prefect's own working directory.
+Legate auto-starts OpenCode on the first tool call if it isn't already running, so this step is optional for most setups. Auto-start spawns `opencode serve --port <N>` where `<N>` is the port from `LEGATE_SERVER_URL` (default 4096). The process is spawned in `LEGATE_DEFAULT_PROJECT` if set, otherwise in Legate's own working directory.
 
-For **multi-server setups**, start each OpenCode instance manually on its own port, then register each one with `prefect add-server` (see [Multi-Server Registry](#multi-server-registry)). Auto-start only manages the single `PREFECT_SERVER_URL` server.
+For **multi-server setups**, start each OpenCode instance manually on its own port, then register each one with `legate add-server` (see [Multi-Server Registry](#multi-server-registry)). Auto-start only manages the single `LEGATE_SERVER_URL` server.
 
-> **Auto-start only works when `PREFECT_SERVER_URL` is local** (`localhost` or `127.0.0.1`). If `PREFECT_SERVER_URL` points to a remote host (e.g. a Windows host IP from WSL2), auto-start will spawn a local process that cannot satisfy the remote health check and will time out. Start OpenCode manually on the remote machine instead.
+> **Auto-start only works when `LEGATE_SERVER_URL` is local** (`localhost` or `127.0.0.1`). If `LEGATE_SERVER_URL` points to a remote host (e.g. a Windows host IP from WSL2), auto-start will spawn a local process that cannot satisfy the remote health check and will time out. Start OpenCode manually on the remote machine instead.
 
 If you prefer to manage the process yourself, start it manually **from your project root** in a dedicated terminal:
 
@@ -219,9 +219,9 @@ cd /path/to/your-project
 opencode serve --port 4096
 ```
 
-> **Run from your project root, not from `~` or elsewhere.** OpenCode sets the working directory for all sessions to wherever `opencode serve` was launched. Manual start from the wrong directory causes `prefect_run` to create files there.
+> **Run from your project root, not from `~` or elsewhere.** OpenCode sets the working directory for all sessions to wherever `opencode serve` was launched. Manual start from the wrong directory causes `legate_run` to create files there.
 
-> **Use `--port 4096`** (or whatever port is in `PREFECT_SERVER_URL`). The default OpenCode port is `0` (random).
+> **Use `--port 4096`** (or whatever port is in `LEGATE_SERVER_URL`). The default OpenCode port is `0` (random).
 
 Health check:
 
@@ -244,7 +244,7 @@ Inside the session, run:
 /mcp
 ```
 
-You should see `prefect` listed as connected. If it shows as failed, the most likely causes (in order):
+You should see `legate` listed as connected. If it shows as failed, the most likely causes (in order):
 1. `build/index.js` does not exist -> run `npm run build`.
 2. `.mcp.json` is malformed or missing -> see step 2 above.
 3. `opencode` is not on PATH (auto-start will fail silently) -> verify with `which opencode`.
@@ -257,19 +257,19 @@ With everything wired up, follow `examples/test-task.md` to confirm the full cre
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
-| `PREFECT_SERVER_URL` | `http://localhost:4096` | Fallback OpenCode URL when the server registry is empty; port is also used when auto-starting (`opencode serve --port <N>`) |
-| `PREFECT_TIMEOUT_MS` | `120000` | Max wait for `prefect_run` to return (ms) |
-| `PREFECT_AUTOSTART_TIMEOUT_MS` | `30000` | Max wait for OpenCode to become healthy after auto-start spawn (ms) |
-| `PREFECT_DEFAULT_PROJECT` | _(unset)_ | Working directory passed to `opencode serve` on auto-start; defaults to Prefect's own cwd |
-| `PREFECT_SERVER_PASSWORD` | _(unset)_ | HTTP Basic Auth password for OpenCode server (read at every tool call) |
-| `PREFECT_SERVER_USERNAME` | `opencode` | HTTP Basic Auth username (only used when `PREFECT_SERVER_PASSWORD` is set) |
-| `PREFECT_SESSION_TTL_MS` | `86400000` | Sessions older than this (ms) are pruned from sessions.json on every read (default: 24 h) |
+| `LEGATE_SERVER_URL` | `http://localhost:4096` | Fallback OpenCode URL when the server registry is empty; port is also used when auto-starting (`opencode serve --port <N>`) |
+| `LEGATE_TIMEOUT_MS` | `120000` | Max wait for `legate_run` to return (ms) |
+| `LEGATE_AUTOSTART_TIMEOUT_MS` | `30000` | Max wait for OpenCode to become healthy after auto-start spawn (ms) |
+| `LEGATE_DEFAULT_PROJECT` | _(unset)_ | Working directory passed to `opencode serve` on auto-start; defaults to Legate's own cwd |
+| `LEGATE_SERVER_PASSWORD` | _(unset)_ | HTTP Basic Auth password for OpenCode server (read at every tool call) |
+| `LEGATE_SERVER_USERNAME` | `opencode` | HTTP Basic Auth username (only used when `LEGATE_SERVER_PASSWORD` is set) |
+| `LEGATE_SESSION_TTL_MS` | `86400000` | Sessions older than this (ms) are pruned from sessions.json on every read (default: 24 h) |
 
-> **Deprecated names:** Old `OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, and `OPENCODE_DEFAULT_PROJECT` env var names still work but emit a stderr deprecation warning on first use. Migrate to the `PREFECT_*` names above.
+> **Deprecated names:** Old `OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, and `OPENCODE_DEFAULT_PROJECT` env var names still work but emit a stderr deprecation warning on first use. Migrate to the `LEGATE_*` names above.
 
-> **Security (INFRA-06):** Do NOT put `PREFECT_SERVER_PASSWORD` in the `.mcp.json` `env` block.
+> **Security (INFRA-06):** Do NOT put `LEGATE_SERVER_PASSWORD` in the `.mcp.json` `env` block.
 > `.mcp.json` is committed to version control — storing credentials there leaks them.
-> Set `PREFECT_SERVER_PASSWORD` in your shell profile (e.g., `~/.bashrc` or `~/.zshrc`)
+> Set `LEGATE_SERVER_PASSWORD` in your shell profile (e.g., `~/.bashrc` or `~/.zshrc`)
 > or in a `.env` file that is gitignored. The MCP server reads it at call time from the
 > shell environment, not from `.mcp.json`.
 
@@ -277,89 +277,89 @@ To override per-project, edit the `env` field of `.mcp.json`:
 
 ```json
 "env": {
-  "PREFECT_SERVER_URL": "http://192.168.x.x:4096",
-  "PREFECT_TIMEOUT_MS": "300000"
+  "LEGATE_SERVER_URL": "http://192.168.x.x:4096",
+  "LEGATE_TIMEOUT_MS": "300000"
 }
 ```
 
 ## Multi-Server Registry
 
-Prefect can route sessions to multiple named OpenCode instances. This is useful when you want to run different models on different machines, or cap how many concurrent sessions each server accepts.
+Legate can route sessions to multiple named OpenCode instances. This is useful when you want to run different models on different machines, or cap how many concurrent sessions each server accepts.
 
 ### How it works
 
-Registered servers are stored in `~/.config/prefect/servers.json`. When you call `prefect_create_session`, Prefect picks the server using this fallback chain:
+Registered servers are stored in `~/.config/prefect/servers.json`. When you call `legate_create_session`, Legate picks the server using this fallback chain:
 
 1. `server` param (named server from registry) — explicit choice
 2. First entry in the registry — default when no name is given
-3. `PREFECT_SERVER_URL` — fallback when the registry is empty
+3. `LEGATE_SERVER_URL` — fallback when the registry is empty
 
-Sessions remember which server they belong to (stored in `~/.config/prefect/sessions.json`), so every subsequent tool call (`prefect_run`, `prefect_get_diff`, etc.) routes automatically to the right server without you passing any extra arguments.
+Sessions remember which server they belong to (stored in `~/.config/prefect/sessions.json`), so every subsequent tool call (`legate_run`, `legate_get_diff`, etc.) routes automatically to the right server without you passing any extra arguments.
 
 ### CLI commands
 
 ```bash
 # Register a server
-prefect add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]
+legate add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]
 
 # Examples
-prefect add-server local  localhost 4096 vllm   qwen2.5-coder
-prefect add-server remote 10.0.0.5  4096 ollama codestral     --max-sessions 3
+legate add-server local  localhost 4096 vllm   qwen2.5-coder
+legate add-server remote 10.0.0.5  4096 ollama codestral     --max-sessions 3
 
 # List registered servers
-prefect list-servers
+legate list-servers
 
 # Remove a server
-prefect remove-server <name>
+legate remove-server <name>
 ```
 
 `add-server` and `remove-server` also update an `## Available Workers` section in your project's `CLAUDE.md` so Claude Code always has an up-to-date list of available servers.
 
 ### Capacity management (`--max-sessions`)
 
-When `--max-sessions <n>` is set for a server, Prefect enforces a hard cap on concurrent sessions for that server. If the cap is reached, `prefect_create_session` returns an error telling you to delete an existing session or choose a different server.
+When `--max-sessions <n>` is set for a server, Legate enforces a hard cap on concurrent sessions for that server. If the cap is reached, `legate_create_session` returns an error telling you to delete an existing session or choose a different server.
 
 The cap is enforced atomically via a file lock on `sessions.json`, so concurrent Claude Code instances cannot both pass the gate.
 
-On each capacity check, Prefect also verifies that existing sessions are still live by calling `GET /session/:id` on the server. Sessions that return non-200 (e.g. after an OpenCode restart) are pruned from `sessions.json` automatically before the count is evaluated.
+On each capacity check, Legate also verifies that existing sessions are still live by calling `GET /session/:id` on the server. Sessions that return non-200 (e.g. after an OpenCode restart) are pruned from `sessions.json` automatically before the count is evaluated.
 
 ### Selecting a server per session
 
-Pass the `server` argument to `prefect_create_session`:
+Pass the `server` argument to `legate_create_session`:
 
 ```
-prefect_create_session({ title: "my task", server: "remote", directory: "/path/to/project" })
+legate_create_session({ title: "my task", server: "remote", directory: "/path/to/project" })
 ```
 
 Omit `server` to use the first registered server. Claude Code reads the `## Available Workers` section in `CLAUDE.md` to know which names are available.
 
 ## Self-Update
 
-When you install prefect globally, the `/prefect-update` Claude Code slash command is installed automatically:
+When you install legate globally, the `/legate-update` Claude Code slash command is installed automatically:
 
 ```bash
-npm install -g @momidala/prefect
-# ~/.claude/commands/prefect-update.md is now installed
+npm install -g @momidala/legate
+# ~/.claude/commands/legate-update.md is now installed
 ```
 
-To update prefect from inside Claude Code, run:
+To update legate from inside Claude Code, run:
 
 ```
-/prefect-update
+/legate-update
 ```
 
-The command runs `npm install -g @momidala/prefect@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
+The command runs `npm install -g @momidala/legate@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
 
-When you uninstall prefect, the command file is removed automatically:
+When you uninstall legate, the command file is removed automatically:
 
 ```bash
-npm uninstall -g @momidala/prefect
-# ~/.claude/commands/prefect-update.md is removed
+npm uninstall -g @momidala/legate
+# ~/.claude/commands/legate-update.md is removed
 ```
 
 ## Agent Checkpointing
 
-Prefect agents (OpenCode sessions spawned via `prefect_run`) can write checkpoint and handoff files to help you recover context after a long session.
+Legate agents (OpenCode sessions spawned via `legate_run`) can write checkpoint and handoff files to help you recover context after a long session.
 
 **Setup:** Place `AGENTS.md` in your project root (or copy the `## Checkpointing` section from this repo's `AGENTS.md`). OpenCode auto-loads `AGENTS.md` at session start, so no extra configuration is needed.
 
@@ -387,7 +387,7 @@ After writing `Handoff.md`, the agent stops initiating new work. You can then st
 
 Active sessions are tracked in `~/.config/prefect/sessions.json`. Each entry records the session ID, which server it belongs to, and when it was created.
 
-**Always call `prefect_session_delete` when a session's work is complete.** Sessions that are not explicitly deleted:
+**Always call `legate_session_delete` when a session's work is complete.** Sessions that are not explicitly deleted:
 - Count against the server's `maxSessions` capacity cap
 - Accumulate in `sessions.json` indefinitely
 
@@ -395,8 +395,8 @@ Two automatic cleanup mechanisms bound the worst-case growth:
 
 | Mechanism | Trigger | What it removes |
 |-----------|---------|-----------------|
-| **TTL pruning** | Every `readSessionMap` call | Entries older than `PREFECT_SESSION_TTL_MS` (default 24 h) |
-| **Liveness check** | Every `prefect_create_session` call (when `maxSessions` is set) | Entries whose server returns non-200 on `GET /session/:id` |
+| **TTL pruning** | Every `readSessionMap` call | Entries older than `LEGATE_SESSION_TTL_MS` (default 24 h) |
+| **Liveness check** | Every `legate_create_session` call (when `maxSessions` is set) | Entries whose server returns non-200 on `GET /session/:id` |
 
 These are safety nets, not a substitute for explicit deletion.
 
@@ -406,9 +406,9 @@ See `CLAUDE.md` for the canonical create -> run -> diff -> test -> correct -> de
 
 ## WSL Note
 
-If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4096` works as expected. If OpenCode is on the Windows host and you're using WSL2 default NAT networking, point `PREFECT_SERVER_URL` at the Windows host IP instead of `localhost`.
+If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4096` works as expected. If OpenCode is on the Windows host and you're using WSL2 default NAT networking, point `LEGATE_SERVER_URL` at the Windows host IP instead of `localhost`.
 
-> **Auto-start does not work when `PREFECT_SERVER_URL` is non-local.** Auto-start spawns `opencode serve` on the same machine as the MCP server, then health-polls `PREFECT_SERVER_URL`. If `PREFECT_SERVER_URL` points to a remote host (e.g. a Windows host IP from WSL2), the local spawn cannot satisfy the remote health check and auto-start will time out. Start OpenCode manually on the remote machine in this case.
+> **Auto-start does not work when `LEGATE_SERVER_URL` is non-local.** Auto-start spawns `opencode serve` on the same machine as the MCP server, then health-polls `LEGATE_SERVER_URL`. If `LEGATE_SERVER_URL` points to a remote host (e.g. a Windows host IP from WSL2), the local spawn cannot satisfy the remote health check and auto-start will time out. Start OpenCode manually on the remote machine in this case.
 
 ## Project Layout
 
@@ -428,9 +428,54 @@ If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `/mcp` shows prefect as failed | `build/` missing | `npm run build` then restart Claude Code |
-| `prefect_create_session` returns connection error | Auto-start failed (opencode not on PATH, or startup exceeded `PREFECT_AUTOSTART_TIMEOUT_MS`) | Check that `opencode` is on PATH; increase `PREFECT_AUTOSTART_TIMEOUT_MS` if slow to start; or start manually: `opencode serve --port 4096` from project root |
-| `prefect_get_diff` returns files in wrong directory | OpenCode started from wrong directory | Stop and restart `opencode serve --port 4096` from the project root |
-| `prefect_run` times out | Default 120s exceeded | Increase `PREFECT_TIMEOUT_MS` in `.mcp.json` env |
-| `prefect_get_diff` returns `[]` | Prompt didn't ask OpenCode to write files | Re-prompt explicitly asking for a file write (see `examples/test-task.md` for a known-good prompt) |
-| Tools missing in fresh Claude session | `.mcp.json` not committed or wrong scope | `claude mcp add --scope project prefect -- node build/index.js` |
+| `/mcp` shows legate as failed | `build/` missing | `npm run build` then restart Claude Code |
+| `legate_create_session` returns connection error | Auto-start failed (opencode not on PATH, or startup exceeded `LEGATE_AUTOSTART_TIMEOUT_MS`) | Check that `opencode` is on PATH; increase `LEGATE_AUTOSTART_TIMEOUT_MS` if slow to start; or start manually: `opencode serve --port 4096` from project root |
+| `legate_get_diff` returns files in wrong directory | OpenCode started from wrong directory | Stop and restart `opencode serve --port 4096` from the project root |
+| `legate_run` times out | Default 120s exceeded | Increase `LEGATE_TIMEOUT_MS` in `.mcp.json` env |
+| `legate_get_diff` returns `[]` | Prompt didn't ask OpenCode to write files | Re-prompt explicitly asking for a file write (see `examples/test-task.md` for a known-good prompt) |
+| Tools missing in fresh Claude session | `.mcp.json` not committed or wrong scope | `claude mcp add --scope project legate -- node build/index.js` |
+
+## Migrating from @momidala/prefect
+
+If you were using the old `@momidala/prefect` package, follow these steps to migrate to `@momidala/legate`:
+
+**Step 1 — Uninstall the old package:**
+
+```bash
+npm uninstall -g @momidala/prefect
+```
+
+**Step 2 — Install the new package:**
+
+```bash
+npm install -g @momidala/legate
+```
+
+**Step 3 — Re-run `legate init` with `--force` to update your `.mcp.json`:**
+
+```bash
+cd /your/project
+legate init --force
+```
+
+This overwrites the old `prefect` key in `.mcp.json` with the new `legate` key. Without `--force`, `legate init` will skip the write if a `legate` entry already exists.
+
+**Step 4 — Rename `PREFECT_*` env vars to `LEGATE_*` in your shell profile or `.mcp.json` env block:**
+
+| Old name | New name |
+|----------|----------|
+| `PREFECT_SERVER_URL` | `LEGATE_SERVER_URL` |
+| `PREFECT_TIMEOUT_MS` | `LEGATE_TIMEOUT_MS` |
+| `PREFECT_AUTOSTART_TIMEOUT_MS` | `LEGATE_AUTOSTART_TIMEOUT_MS` |
+| `PREFECT_DEFAULT_PROJECT` | `LEGATE_DEFAULT_PROJECT` |
+| `PREFECT_SERVER_PASSWORD` | `LEGATE_SERVER_PASSWORD` |
+| `PREFECT_SERVER_USERNAME` | `LEGATE_SERVER_USERNAME` |
+| `PREFECT_SESSION_TTL_MS` | `LEGATE_SESSION_TTL_MS` |
+
+> **Backward compatibility:** The old `PREFECT_*` names continue to work during a transition period — Legate reads both and emits a one-time deprecation warning to stderr per process when the old name is used. You can migrate env vars at your own pace; the server will function correctly with either name. Renaming is recommended to silence the deprecation warnings.
+
+**Step 5 — Your existing session data is preserved:**
+
+Session files in `~/.config/prefect/` (`sessions.json` and `servers.json`) are **not** moved or renamed as part of this upgrade. Legate continues to read and write these files from their existing location. No manual cleanup is required.
+
+**After migration:** Restart Claude Code so it picks up the updated `.mcp.json`. Run `/mcp` to confirm `legate` is listed as connected.
