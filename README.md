@@ -82,7 +82,7 @@ Also included:
 ### Option 1: Global install (recommended)
 
 ```bash
-npm install -g @momidala/legate
+npm install -g legate
 cd /your/project
 legate init
 ```
@@ -338,7 +338,7 @@ Omit `server` to use the first registered server. Claude Code reads the `## Avai
 When you install legate globally, the `/legate-update` Claude Code slash command is installed automatically:
 
 ```bash
-npm install -g @momidala/legate
+npm install -g legate
 # ~/.claude/commands/legate-update.md is now installed
 ```
 
@@ -348,12 +348,12 @@ To update legate from inside Claude Code, run:
 /legate-update
 ```
 
-The command runs `npm install -g @momidala/legate@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
+The command runs `npm install -g legate@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
 
 When you uninstall legate, the command file is removed automatically:
 
 ```bash
-npm uninstall -g @momidala/legate
+npm uninstall -g legate
 # ~/.claude/commands/legate-update.md is removed
 ```
 
@@ -437,7 +437,7 @@ If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4
 
 ## Migrating from @momidala/prefect
 
-If you were using the old `@momidala/prefect` package, follow these steps to migrate to `@momidala/legate`:
+If you were using the old `@momidala/prefect` package, follow these steps to migrate to `legate`:
 
 **Step 1 — Uninstall the old package:**
 
@@ -448,7 +448,7 @@ npm uninstall -g @momidala/prefect
 **Step 2 — Install the new package:**
 
 ```bash
-npm install -g @momidala/legate
+npm install -g legate
 ```
 
 **Step 3 — Re-run `legate init` with `--force` to update your `.mcp.json`:**

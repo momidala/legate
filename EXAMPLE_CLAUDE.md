@@ -1,6 +1,6 @@
 # CLAUDE.md — Legate Instructions
 
-This project uses **Legate** ([`@momidala/legate`](https://www.npmjs.com/package/@momidala/legate)) — an MCP server that exposes a local OpenCode instance as Claude Code tools. Claude Code orchestrates at the task level (decompose, review, correct) while delegating actual file edits to a local model running in OpenCode. Diffs land in your working tree; you commit when ready.
+This project uses **Legate** ([`legate`](https://www.npmjs.com/package/legate)) — an MCP server that exposes a local OpenCode instance as Claude Code tools. Claude Code orchestrates at the task level (decompose, review, correct) while delegating actual file edits to a local model running in OpenCode. Diffs land in your working tree; you commit when ready.
 
 ## Available Workers
 

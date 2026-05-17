@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-04  
 **Tester:** UAT Agent  
-**Version:** package `@momidala/legate` v2.0 (referred to as "v2.0" due to major feature additions)  
+**Version:** package `legate` v2.0 (referred to as "v2.0" due to major feature additions)  
 **Scope:** All tools, CLI commands, registry management, capacity enforcement, and session lifecycle
 
 ---
