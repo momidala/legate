@@ -37,8 +37,8 @@ const LEGATE_UPDATE_COMMAND_CONTENT = `Update the legate package to the latest v
 Run this bash command:
 
 \`\`\`bash
-npm install -g @momidala/legate@latest && \\
-  NEW_VERSION=$(node --input-type=commonjs -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'@momidala/legate/package.json'));process.stdout.write(pkg.version);") && \\
+npm install -g legate@latest && \\
+  NEW_VERSION=$(node --input-type=commonjs -e "const p=require('path');const cp=require('child_process');const root=cp.execSync('npm root -g',{encoding:'utf8'}).trim();const pkg=require(p.join(root,'legate/package.json'));process.stdout.write(pkg.version);") && \\
   echo "legate updated to v$NEW_VERSION. Restart Claude Code to apply."
 \`\`\`
 `;

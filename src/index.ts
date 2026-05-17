@@ -36,15 +36,27 @@ const BASE_URL =
   'http://localhost:4096';
 
 let warnedTimeoutMs = false;
+let warnedOpenCodeTimeoutMs = false;
 function resolveTimeoutMs(): number {
   const legateVal = process.env.LEGATE_TIMEOUT_MS;
   if (legateVal) return parseInt(legateVal, 10) || 120_000;
-  const old = process.env.PREFECT_TIMEOUT_MS;
-  if (old && !warnedTimeoutMs) {
-    console.error('[Legate] PREFECT_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
-    warnedTimeoutMs = true;
+  const prefectVal = process.env.PREFECT_TIMEOUT_MS;
+  if (prefectVal) {
+    if (!warnedTimeoutMs) {
+      console.error('[Legate] PREFECT_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
+      warnedTimeoutMs = true;
+    }
+    return parseInt(prefectVal, 10) || 120_000;
   }
-  return parseInt(old ?? '', 10) || 120_000;
+  const opencodeVal = process.env.OPENCODE_TIMEOUT_MS;
+  if (opencodeVal) {
+    if (!warnedOpenCodeTimeoutMs) {
+      console.error('[Legate] OPENCODE_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
+      warnedOpenCodeTimeoutMs = true;
+    }
+    return parseInt(opencodeVal, 10) || 120_000;
+  }
+  return 120_000;
 }
 const TIMEOUT_MS = resolveTimeoutMs();
 
@@ -531,7 +543,7 @@ server.registerTool(
       // Persist the forked session so subsequent tool calls can route to the same server.
       // Store parentId so legate_session_children can find fork-created children locally.
       if (data && sourceEntry) {
-        addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId });
+        addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId, createdAt: Date.now() });
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1794,7 +1806,7 @@ server.registerTool(
 server.registerTool(
   'legate_session_shell',
   {
-    description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Prefect layer. sessionId, agent, and command are all required. model override is optional.',
+    description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Legate layer. sessionId, agent, and command are all required. model override is optional.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID in which to execute the command'),
       command: z.string().describe('Shell command to execute in the session\'s context'),
@@ -1999,7 +2011,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr only — never stdout (corrupts JSON-RPC stream)
-  console.error(`Prefect MCP server running (OpenCode: ${BASE_URL})`);
+  console.error(`Legate MCP server running (OpenCode: ${BASE_URL})`);
 }
 
 main().catch((err) => {

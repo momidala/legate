@@ -441,11 +441,11 @@ test('MULTI-09: init silent when servers already registered', () => {
 // SELFUP-01..SELFUP-05: install-command and uninstall-command lifecycle tests
 
 // Helper: spawn cli.js from a fake global install path so isGlobal===true.
-// Copies the entire build/ dir into <tmp>/node_modules/@momidala/prefect/build/
+// Copies the entire build/ dir into <tmp>/node_modules/legate/build/
 // and writes a stub package.json so module resolution works.
 function runCliAsGlobal(homeDir: string, ...args: string[]):
   { status: number; stdout: string; stderr: string } {
-  const fakeGlobalRoot = join(homeDir, 'node_modules', '@momidala', 'prefect');
+  const fakeGlobalRoot = join(homeDir, 'node_modules', 'legate');
   const fakeBuildDir = join(fakeGlobalRoot, 'build');
   mkdirSync(fakeBuildDir, { recursive: true });
   // Copy all build artifacts so imports resolve
@@ -459,7 +459,7 @@ function runCliAsGlobal(homeDir: string, ...args: string[]):
     writeFileSync(join(fakeBuildDir, f), readFileSync(srcPath, 'utf8'));
   }
   // Stub package.json at the fake root (cli.js reads ../package.json for version)
-  writeFileSync(join(fakeGlobalRoot, 'package.json'), JSON.stringify({ name: '@momidala/prefect', version: '0.0.0-test' }));
+  writeFileSync(join(fakeGlobalRoot, 'package.json'), JSON.stringify({ name: 'legate', version: '0.0.0-test' }));
   const fakeCli = join(fakeBuildDir, 'cli.js');
   const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir, npm_config_global: 'true' };
   const res = spawnSync('node', [fakeCli, ...args], { cwd: homeDir, encoding: 'utf8', env });
@@ -502,7 +502,7 @@ test('SELFUP-01: install-command writes ~/.claude/commands/legate-update.md when
     assert.ok(existsSync(dest), 'legate-update.md must be written');
     const content = readFileSync(dest, 'utf8');
     // SELFUP-03: update command embedded
-    assert.match(content, /npm install -g @momidala\/legate@latest/);
+    assert.match(content, /npm install -g legate@latest/);
     // SELFUP-04: new version display embedded
     assert.match(content, /legate updated to v/);
     // SELFUP-05: restart reminder embedded

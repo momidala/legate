@@ -7,10 +7,12 @@ import { buildAuthHeader } from './auth.js';
 const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
 
 let warnedSessionTtl = false;
+let warnedOpenCodeSessionTtl = false;
 
 /** @internal — test use only. Resets the deprecation warn flag so each test starts clean. */
 export function _resetWarnFlags(): void {
   warnedSessionTtl = false;
+  warnedOpenCodeSessionTtl = false;
 }
 
 export interface SessionEntry {
@@ -41,6 +43,7 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
   const legateVal = process.env.LEGATE_SESSION_TTL_MS;
   if (legateVal !== undefined) {
     ttlMs = Number(legateVal);
+    if (!Number.isFinite(ttlMs)) ttlMs = DEFAULT_SESSION_TTL_MS;
   } else {
     const prefectVal = process.env.PREFECT_SESSION_TTL_MS;
     if (prefectVal !== undefined) {
@@ -49,8 +52,19 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
         warnedSessionTtl = true;
       }
       ttlMs = Number(prefectVal);
+      if (!Number.isFinite(ttlMs)) ttlMs = DEFAULT_SESSION_TTL_MS;
     } else {
-      ttlMs = DEFAULT_SESSION_TTL_MS;
+      const opencodeVal = process.env.OPENCODE_SESSION_TTL_MS;
+      if (opencodeVal !== undefined) {
+        if (!warnedOpenCodeSessionTtl) {
+          console.error('[Legate] OPENCODE_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
+          warnedOpenCodeSessionTtl = true;
+        }
+        ttlMs = Number(opencodeVal);
+        if (!Number.isFinite(ttlMs)) ttlMs = DEFAULT_SESSION_TTL_MS;
+      } else {
+        ttlMs = DEFAULT_SESSION_TTL_MS;
+      }
     }
   }
 
