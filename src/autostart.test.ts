@@ -1,6 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ensureOpencodeRunning, _resetStartPromise } from './autostart.js';
+// expects Plan 02 to export autostartTimeoutMs and _resetWarnFlags from autostart.ts
+import { ensureOpencodeRunning, _resetStartPromise, autostartTimeoutMs, _resetWarnFlags } from './autostart.js';
 import type { ServerEntry } from './registry.js';
 
 beforeEach(() => {
@@ -106,5 +107,84 @@ test('health poll URL targets server.host:server.port (not BASE_URL)', async () 
     assert.ok(urlCapture.url.includes(':4099/global/health'), `expected :4099/global/health in URL, got: ${urlCapture.url}`);
   } finally {
     (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
+  }
+});
+
+// ── RENAME-04 deprecation warning tests ────────────────────────────────────
+// Warning text Plan 02 will emit: '[Legate] PREFECT_AUTOSTART_TIMEOUT_MS is deprecated, use LEGATE_AUTOSTART_TIMEOUT_MS'
+// These tests MUST FAIL (RED) against current source — Plan 02 exports autostartTimeoutMs
+// and _resetWarnFlags from autostart.ts to make them pass.
+
+test('autostartTimeoutMs emits one-time deprecation warning for PREFECT_AUTOSTART_TIMEOUT_MS when LEGATE_AUTOSTART_TIMEOUT_MS is not set', () => {
+  _resetWarnFlags();
+  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+  delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    autostartTimeoutMs();
+    const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
+    assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning, got ${timeoutWarnings.length}: ${JSON.stringify(warnings)}`);
+    assert.ok(timeoutWarnings[0].includes('LEGATE_AUTOSTART_TIMEOUT_MS'), `warning should mention LEGATE_AUTOSTART_TIMEOUT_MS: ${timeoutWarnings[0]}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
+  }
+});
+
+test('autostartTimeoutMs emits PREFECT_AUTOSTART_TIMEOUT_MS warning exactly once when called twice (one-time-per-process guard)', () => {
+  _resetWarnFlags();
+  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+  delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    autostartTimeoutMs();
+    autostartTimeoutMs(); // second call — must NOT emit a second warning
+    const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
+    assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning across 2 calls, got ${timeoutWarnings.length}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
+  }
+});
+
+test('autostartTimeoutMs emits NO PREFECT_AUTOSTART_TIMEOUT_MS warning when LEGATE_AUTOSTART_TIMEOUT_MS is also set (LEGATE_* takes precedence)', () => {
+  _resetWarnFlags();
+  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+  process.env.LEGATE_AUTOSTART_TIMEOUT_MS = '10000';
+  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    autostartTimeoutMs();
+    const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
+    assert.equal(timeoutWarnings.length, 0, `expected 0 PREFECT_AUTOSTART_TIMEOUT_MS warnings when LEGATE_AUTOSTART_TIMEOUT_MS is set, got ${timeoutWarnings.length}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
+    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
+    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
   }
 });

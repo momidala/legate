@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
-import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd } from './sessions.js';
+// expects Plan 02 to export _resetWarnFlags from sessions.ts
+import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _resetWarnFlags } from './sessions.js';
 
 function freshTmp(): string {
   return mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
@@ -276,6 +277,94 @@ test('atomicCheckAndAdd enforces capacity after pruning dead sessions', async ()
     assert.ok(result.includes('at capacity'), 'error should mention capacity');
   } finally {
     (globalThis as Record<string, unknown>).fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── RENAME-04 deprecation warning tests ────────────────────────────────────
+// Warning text Plan 02 will emit: '[Legate] PREFECT_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS'
+// These tests MUST FAIL (RED) against current source — Plan 02 exports _resetWarnFlags
+// from sessions.ts and adds LEGATE_SESSION_TTL_MS support to make them pass.
+
+test('readSessionMap emits one-time deprecation warning for PREFECT_SESSION_TTL_MS when LEGATE_SESSION_TTL_MS is not set', () => {
+  _resetWarnFlags();
+  const dir = mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
+  const prevLegate = process.env.LEGATE_SESSION_TTL_MS;
+  const prevPrefect = process.env.PREFECT_SESSION_TTL_MS;
+  delete process.env.LEGATE_SESSION_TTL_MS;
+  process.env.PREFECT_SESSION_TTL_MS = '3600000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    const regPath = join(dir, 'sessions.json');
+    readSessionMap(regPath);
+    const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
+    assert.equal(ttlWarnings.length, 1, `expected exactly 1 PREFECT_SESSION_TTL_MS warning, got ${ttlWarnings.length}: ${JSON.stringify(warnings)}`);
+    assert.ok(ttlWarnings[0].includes('LEGATE_SESSION_TTL_MS'), `warning should mention LEGATE_SESSION_TTL_MS: ${ttlWarnings[0]}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
+    else process.env.PREFECT_SESSION_TTL_MS = prevPrefect;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readSessionMap emits PREFECT_SESSION_TTL_MS warning exactly once when called twice (one-time-per-process guard)', () => {
+  _resetWarnFlags();
+  const dir = mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
+  const prevLegate = process.env.LEGATE_SESSION_TTL_MS;
+  const prevPrefect = process.env.PREFECT_SESSION_TTL_MS;
+  delete process.env.LEGATE_SESSION_TTL_MS;
+  process.env.PREFECT_SESSION_TTL_MS = '3600000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    const regPath = join(dir, 'sessions.json');
+    readSessionMap(regPath);
+    readSessionMap(regPath); // second call — must NOT emit a second warning
+    const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
+    assert.equal(ttlWarnings.length, 1, `expected exactly 1 PREFECT_SESSION_TTL_MS warning across 2 calls, got ${ttlWarnings.length}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
+    else process.env.PREFECT_SESSION_TTL_MS = prevPrefect;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readSessionMap emits NO PREFECT_SESSION_TTL_MS warning when LEGATE_SESSION_TTL_MS is also set (LEGATE_* takes precedence)', () => {
+  _resetWarnFlags();
+  const dir = mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
+  const prevLegate = process.env.LEGATE_SESSION_TTL_MS;
+  const prevPrefect = process.env.PREFECT_SESSION_TTL_MS;
+  process.env.LEGATE_SESSION_TTL_MS = '2000';
+  process.env.PREFECT_SESSION_TTL_MS = '1000';
+
+  const warnings: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+
+  try {
+    const regPath = join(dir, 'sessions.json');
+    readSessionMap(regPath);
+    const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
+    assert.equal(ttlWarnings.length, 0, `expected 0 PREFECT_SESSION_TTL_MS warnings when LEGATE_SESSION_TTL_MS is set, got ${ttlWarnings.length}`);
+  } finally {
+    console.error = origError;
+    if (prevLegate === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = prevLegate;
+    if (prevPrefect === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
+    else process.env.PREFECT_SESSION_TTL_MS = prevPrefect;
     rmSync(dir, { recursive: true, force: true });
   }
 });
