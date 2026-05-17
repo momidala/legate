@@ -50,6 +50,7 @@ Added self-update (npm lifecycle hooks + `/prefect-update` Claude command) and a
 - SKILL-04: legate init installs ~/.claude/commands/legate-update.md
 - SKILL-05: Skill files versioned; legate init overwrites on reinstall
 - DOC-01: README updated for new name, binaries, env vars, migration note
+- DOC-02: .gitattributes with linguist-language=TypeScript to fix GitHub language stats
 
 ### Out of Scope
 
