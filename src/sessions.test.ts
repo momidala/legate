@@ -7,7 +7,7 @@ import { resolve, join } from 'node:path';
 import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _resetWarnFlags } from './sessions.js';
 
 function freshTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'prefect-sessions-'));
+  return mkdtempSync(join(tmpdir(), 'legate-sessions-'));
 }
 
 const SESSIONS_BUILD = resolve(process.cwd(), 'build/sessions.js');
@@ -167,9 +167,9 @@ test('addSession stamps createdAt on new entries', () => {
   }
 });
 
-test('readSessionMap prunes entries older than PREFECT_SESSION_TTL_MS', () => {
+test('readSessionMap prunes entries older than LEGATE_SESSION_TTL_MS', () => {
   const dir = freshTmp();
-  const orig = process.env.PREFECT_SESSION_TTL_MS;
+  const orig = process.env.LEGATE_SESSION_TTL_MS;
   try {
     const regPath = join(dir, 'sessions.json');
     const old = Date.now() - 1000; // 1 second ago
@@ -180,20 +180,20 @@ test('readSessionMap prunes entries older than PREFECT_SESSION_TTL_MS', () => {
       },
     }, regPath);
     // TTL of 500ms — ses_old (1s old) should be pruned, ses_new should survive
-    process.env.PREFECT_SESSION_TTL_MS = '500';
+    process.env.LEGATE_SESSION_TTL_MS = '500';
     const map = readSessionMap(regPath);
     assert.ok(!('ses_old' in map.sessions), 'expired entry should be pruned');
     assert.ok('ses_new' in map.sessions, 'fresh entry should survive');
   } finally {
-    if (orig === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
-    else process.env.PREFECT_SESSION_TTL_MS = orig;
+    if (orig === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = orig;
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('readSessionMap keeps legacy entries without createdAt (never expires them)', () => {
   const dir = freshTmp();
-  const orig = process.env.PREFECT_SESSION_TTL_MS;
+  const orig = process.env.LEGATE_SESSION_TTL_MS;
   try {
     const regPath = join(dir, 'sessions.json');
     writeSessionMap({
@@ -201,12 +201,12 @@ test('readSessionMap keeps legacy entries without createdAt (never expires them)
         'ses_legacy': { server: 'local', url: 'http://localhost:4096' }, // no createdAt
       },
     }, regPath);
-    process.env.PREFECT_SESSION_TTL_MS = '1'; // 1ms TTL — would prune anything with createdAt
+    process.env.LEGATE_SESSION_TTL_MS = '1'; // 1ms TTL — would prune anything with createdAt
     const map = readSessionMap(regPath);
     assert.ok('ses_legacy' in map.sessions, 'legacy entry without createdAt should never be pruned');
   } finally {
-    if (orig === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
-    else process.env.PREFECT_SESSION_TTL_MS = orig;
+    if (orig === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = orig;
     rmSync(dir, { recursive: true, force: true });
   }
 });

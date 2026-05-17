@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 
-// CMD-01 behavior tests for prefect_session_command input schema.
+// CMD-01 behavior tests for legate_session_command input schema.
 // These verify that the Zod schema for the tool's inputSchema enforces
 // the correct shape — in particular that `model` is a plain string (NOT
 // { providerID, modelID }) and that `command` + `arguments` are required.

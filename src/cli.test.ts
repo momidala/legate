@@ -11,7 +11,7 @@ if (!existsSync(CLI)) {
 }
 
 function freshTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'prefect-cli-'));
+  return mkdtempSync(join(tmpdir(), 'legate-cli-'));
 }
 
 function runInit(cwd: string, ...args: string[]): { status: number; stderr: string } {
@@ -31,17 +31,17 @@ test('Case 1: creates .mcp.json when none exists', () => {
     const { status } = runInit(dir, 'init');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
-    assert.ok(cfg.mcpServers.prefect);
-    assert.equal(cfg.mcpServers.prefect.command, 'node');
-    assert.equal(cfg.mcpServers.prefect.type, 'stdio');
-    assert.ok(Array.isArray(cfg.mcpServers.prefect.args));
-    assert.ok(cfg.mcpServers.prefect.args[0].endsWith('index.js'));
+    assert.ok(cfg.mcpServers.legate);
+    assert.equal(cfg.mcpServers.legate.command, 'node');
+    assert.equal(cfg.mcpServers.legate.type, 'stdio');
+    assert.ok(Array.isArray(cfg.mcpServers.legate.args));
+    assert.ok(cfg.mcpServers.legate.args[0].endsWith('index.js'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('Case 2: adds prefect entry, preserves siblings', () => {
+test('Case 2: adds legate entry, preserves siblings', () => {
   const dir = freshTmp();
   try {
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
@@ -50,7 +50,7 @@ test('Case 2: adds prefect entry, preserves siblings', () => {
     const { status } = runInit(dir, 'init');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
-    assert.ok(cfg.mcpServers.prefect);
+    assert.ok(cfg.mcpServers.legate);
     assert.ok(cfg.mcpServers.other);
     assert.equal(cfg.mcpServers.other.command, 'sh');
   } finally {
@@ -58,36 +58,36 @@ test('Case 2: adds prefect entry, preserves siblings', () => {
   }
 });
 
-test('Case 3: exits 1 when prefect already present without --force', () => {
+test('Case 3: exits 1 when legate already present without --force', () => {
   const dir = freshTmp();
   try {
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
-      mcpServers: { prefect: { command: 'old', args: [] } },
+      mcpServers: { legate: { command: 'old', args: [] } },
     }));
     const { status, stderr } = runInit(dir, 'init');
     assert.equal(status, 1);
     assert.match(stderr, /--force/);
     // Verify .mcp.json untouched
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
-    assert.equal(cfg.mcpServers.prefect.command, 'old');
+    assert.equal(cfg.mcpServers.legate.command, 'old');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('Case 4: --force overwrites only the prefect key', () => {
+test('Case 4: --force overwrites only the legate key', () => {
   const dir = freshTmp();
   try {
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
       mcpServers: {
-        prefect: { command: 'old', args: [] },
+        legate: { command: 'old', args: [] },
         other: { command: 'sh' },
       },
     }));
     const { status } = runInit(dir, 'init', '--force');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
-    assert.equal(cfg.mcpServers.prefect.command, 'node');
+    assert.equal(cfg.mcpServers.legate.command, 'node');
     assert.equal(cfg.mcpServers.other.command, 'sh');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -105,7 +105,7 @@ test('Root-level non-mcpServers keys are preserved', () => {
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
     assert.equal(cfg.theme, 'dark');
-    assert.ok(cfg.mcpServers.prefect);
+    assert.ok(cfg.mcpServers.legate);
     assert.ok(cfg.mcpServers.other);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -118,7 +118,7 @@ test('Bogus subcommand exits 1 with usage', () => {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status, stderr } = runCli(dir, env, 'bogus');
     assert.equal(status, 1);
-    assert.match(stderr, /Usage: prefect <subcommand>/);
+    assert.match(stderr, /Usage: legate <subcommand>/);
     assert.match(stderr, /add-server <name> <host> <port> <provider> <model>/);
     assert.match(stderr, /list-servers/);
     assert.equal(existsSync(join(dir, '.mcp.json')), false);
@@ -149,7 +149,7 @@ test('add-server with missing args prints usage and exits 1', () => {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status, stderr } = runCli(dir, env, 'add-server', 'local', 'localhost');
     assert.equal(status, 1);
-    assert.match(stderr, /Usage: prefect add-server/);
+    assert.match(stderr, /Usage: legate add-server/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -418,7 +418,7 @@ test('MULTI-09: init prints guidance when registry empty', () => {
     const { status, stderr } = runCli(dir, env, 'init');
     assert.equal(status, 0);
     assert.match(stderr, /No servers registered yet/);
-    assert.match(stderr, /prefect add-server local localhost 4096 ollama qwen2\.5-coder/);
+    assert.match(stderr, /legate add-server local localhost 4096 ollama qwen2\.5-coder/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -474,7 +474,7 @@ test('SELFUP: install-command silent-skips when not global (exit 0, no file, no 
     assert.equal(status, 0);
     assert.equal(stdout, '');
     assert.equal(stderr, '');
-    assert.equal(existsSync(join(dir, '.claude', 'commands', 'prefect-update.md')), false);
+    assert.equal(existsSync(join(dir, '.claude', 'commands', 'legate-update.md')), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -493,18 +493,18 @@ test('SELFUP: uninstall-command silent-skips when not global (exit 0, no stderr)
   }
 });
 
-test('SELFUP-01: install-command writes ~/.claude/commands/prefect-update.md when global', () => {
+test('SELFUP-01: install-command writes ~/.claude/commands/legate-update.md when global', () => {
   const dir = freshTmp();
   try {
     const { status, stderr } = runCliAsGlobal(dir, 'install-command');
     assert.equal(status, 0, `expected exit 0, got ${status}, stderr: ${stderr}`);
-    const dest = join(dir, '.claude', 'commands', 'prefect-update.md');
-    assert.ok(existsSync(dest), 'prefect-update.md must be written');
+    const dest = join(dir, '.claude', 'commands', 'legate-update.md');
+    assert.ok(existsSync(dest), 'legate-update.md must be written');
     const content = readFileSync(dest, 'utf8');
     // SELFUP-03: update command embedded
-    assert.match(content, /npm install -g @momidala\/prefect@latest/);
+    assert.match(content, /npm install -g @momidala\/legate@latest/);
     // SELFUP-04: new version display embedded
-    assert.match(content, /prefect updated to v/);
+    assert.match(content, /legate updated to v/);
     // SELFUP-05: restart reminder embedded
     assert.match(content, /Restart Claude Code to apply\./);
   } finally {
@@ -520,18 +520,18 @@ test('SELFUP-01: install-command creates ~/.claude/commands/ if missing (mkdir -
     const { status } = runCliAsGlobal(dir, 'install-command');
     assert.equal(status, 0);
     assert.ok(existsSync(join(dir, '.claude', 'commands')), 'directory must be created');
-    assert.ok(existsSync(join(dir, '.claude', 'commands', 'prefect-update.md')), 'file must be written');
+    assert.ok(existsSync(join(dir, '.claude', 'commands', 'legate-update.md')), 'file must be written');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('SELFUP-02: uninstall-command removes ~/.claude/commands/prefect-update.md when present', () => {
+test('SELFUP-02: uninstall-command removes ~/.claude/commands/legate-update.md when present', () => {
   const dir = freshTmp();
   try {
     // First install
     runCliAsGlobal(dir, 'install-command');
-    const dest = join(dir, '.claude', 'commands', 'prefect-update.md');
+    const dest = join(dir, '.claude', 'commands', 'legate-update.md');
     assert.ok(existsSync(dest), 'precondition: file must exist after install');
     // Then uninstall
     const { status, stderr } = runCliAsGlobal(dir, 'uninstall-command');
@@ -565,20 +565,20 @@ test('SELFUP: install-command warns to stderr and exits 0 when mkdir/write fails
     writeFileSync(join(dir, '.claude'), 'i am a file not a directory');
     const { status, stderr } = runCliAsGlobal(dir, 'install-command');
     assert.equal(status, 0, 'D-07: must exit 0 even on failure');
-    assert.match(stderr, /Warning: prefect-update command not installed —/);
+    assert.match(stderr, /Warning: legate-update command not installed —/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('SELFUP: prefect bogus usage lists install-command and uninstall-command', () => {
+test('SELFUP: legate bogus usage lists install-command and uninstall-command', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status, stderr } = runCli(dir, env, 'bogus');
     assert.equal(status, 1);
-    assert.match(stderr, /install-command\s+Install \/prefect-update Claude command/);
-    assert.match(stderr, /uninstall-command\s+Remove \/prefect-update Claude command/);
+    assert.match(stderr, /install-command\s+Install \/legate-update Claude command/);
+    assert.match(stderr, /uninstall-command\s+Remove \/legate-update Claude command/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

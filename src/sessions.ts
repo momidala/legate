@@ -29,6 +29,25 @@ const SESSIONS_DIR = join(homedir(), '.config', 'prefect');
 export const SESSIONS_PATH = join(SESSIONS_DIR, 'sessions.json');
 
 export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap {
+  // Resolve TTL env var (with deprecation warning) before file I/O so the warning
+  // fires even when sessions.json does not exist yet (ENOENT path).
+  let ttlMs: number;
+  const legateVal = process.env.LEGATE_SESSION_TTL_MS;
+  if (legateVal !== undefined) {
+    ttlMs = Number(legateVal);
+  } else {
+    const prefectVal = process.env.PREFECT_SESSION_TTL_MS;
+    if (prefectVal !== undefined) {
+      if (!warnedSessionTtl) {
+        console.error('[Legate] PREFECT_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
+        warnedSessionTtl = true;
+      }
+      ttlMs = Number(prefectVal);
+    } else {
+      ttlMs = DEFAULT_SESSION_TTL_MS;
+    }
+  }
+
   try {
     const parsed = JSON.parse(readFileSync(sessionsPath, 'utf8'));
     if (!parsed || typeof parsed.sessions !== 'object' || Array.isArray(parsed.sessions)) {
@@ -37,22 +56,6 @@ export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap
     const map = parsed as SessionMap;
     // TTL pruning: remove entries older than LEGATE_SESSION_TTL_MS (default 24h).
     // Legacy entries without createdAt are kept (treated as non-expired).
-    let ttlMs: number;
-    const legateVal = process.env.LEGATE_SESSION_TTL_MS;
-    if (legateVal !== undefined) {
-      ttlMs = Number(legateVal);
-    } else {
-      const prefectVal = process.env.PREFECT_SESSION_TTL_MS;
-      if (prefectVal !== undefined) {
-        if (!warnedSessionTtl) {
-          console.error('[Legate] PREFECT_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
-          warnedSessionTtl = true;
-        }
-        ttlMs = Number(prefectVal);
-      } else {
-        ttlMs = DEFAULT_SESSION_TTL_MS;
-      }
-    }
     const now = Date.now();
     let pruned = false;
     for (const [id, entry] of Object.entries(map.sessions)) {
