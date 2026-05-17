@@ -28,7 +28,7 @@ Before starting:
 4. The MCP server is connected in Claude Code (tool `legate_list_agents` is callable)
 5. Clean slate — remove stale state files:
    ```bash
-   rm -f ~/.config/prefect/servers.json ~/.config/prefect/sessions.json
+   rm -f ~/.config/legate/servers.json ~/.config/legate/sessions.json
    ```
 6. Working directory for session/run tests: a scratch directory `/tmp/legate-uat`
    ```bash
@@ -939,7 +939,7 @@ legate_create_session({ title: "autostart test", server: "thor", directory: "/tm
 
 1. `messageID` must start with `msg` — UUIDs are rejected by OpenCode (Phase 11 finding).
 2. `providerID` must match a provider configured in the connected OpenCode server's `opencode.json`.
-3. Before re-running UAT, delete `~/.config/prefect/servers.json` and `sessions.json` to avoid stale entries causing list-servers crash.
+3. Before re-running UAT, delete `~/.config/legate/servers.json` and `sessions.json` to avoid stale entries causing list-servers crash.
 4. `add-server` uses `providerID` and `modelID` as separate fields (not a flat `model` string).
 5. Sessions persist across server restarts only if `sessions.json` is intact — if the OpenCode server is replaced/restarted, `sessions.json` entries pointing to old session IDs will return 404 and should be cleaned up.
 6. `legate_session_init` on a sparse/empty directory with no relevant code may produce a minimal or empty AGENTS.md even with `force: true` — this is expected model behavior.

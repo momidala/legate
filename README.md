@@ -288,13 +288,13 @@ Legate can route sessions to multiple named OpenCode instances. This is useful w
 
 ### How it works
 
-Registered servers are stored in `~/.config/prefect/servers.json`. When you call `legate_create_session`, Legate picks the server using this fallback chain:
+Registered servers are stored in `~/.config/legate/servers.json`. When you call `legate_create_session`, Legate picks the server using this fallback chain:
 
 1. `server` param (named server from registry) — explicit choice
 2. First entry in the registry — default when no name is given
 3. `LEGATE_SERVER_URL` — fallback when the registry is empty
 
-Sessions remember which server they belong to (stored in `~/.config/prefect/sessions.json`), so every subsequent tool call (`legate_run`, `legate_get_diff`, etc.) routes automatically to the right server without you passing any extra arguments.
+Sessions remember which server they belong to (stored in `~/.config/legate/sessions.json`), so every subsequent tool call (`legate_run`, `legate_get_diff`, etc.) routes automatically to the right server without you passing any extra arguments.
 
 ### CLI commands
 
@@ -385,7 +385,7 @@ After writing `Handoff.md`, the agent stops initiating new work. You can then st
 
 ## Session Lifecycle
 
-Active sessions are tracked in `~/.config/prefect/sessions.json`. Each entry records the session ID, which server it belongs to, and when it was created.
+Active sessions are tracked in `~/.config/legate/sessions.json`. Each entry records the session ID, which server it belongs to, and when it was created.
 
 **Always call `legate_session_delete` when a session's work is complete.** Sessions that are not explicitly deleted:
 - Count against the server's `maxSessions` capacity cap
@@ -476,6 +476,6 @@ This overwrites the old `prefect` key in `.mcp.json` with the new `legate` key. 
 
 **Step 5 — Your existing session data is preserved:**
 
-Session files in `~/.config/prefect/` (`sessions.json` and `servers.json`) are **not** moved or renamed as part of this upgrade. Legate continues to read and write these files from their existing location. No manual cleanup is required.
+Session files in `~/.config/legate/` (`sessions.json` and `servers.json`) are **not** moved or renamed as part of this upgrade. Legate continues to read and write these files from their existing location. No manual cleanup is required.
 
 **After migration:** Restart Claude Code so it picks up the updated `.mcp.json`. Run `/mcp` to confirm `legate` is listed as connected.

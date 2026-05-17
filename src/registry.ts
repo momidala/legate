@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -15,8 +15,14 @@ export interface Registry {
   servers: ServerEntry[];
 }
 
-const REGISTRY_DIR = join(homedir(), '.config', 'prefect');
+const REGISTRY_DIR = join(homedir(), '.config', 'legate');
 export const REGISTRY_PATH = join(REGISTRY_DIR, 'servers.json');
+
+// One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ on first run
+const OLD_REGISTRY_DIR = join(homedir(), '.config', 'prefect');
+if (!existsSync(REGISTRY_DIR) && existsSync(OLD_REGISTRY_DIR)) {
+  try { cpSync(OLD_REGISTRY_DIR, REGISTRY_DIR, { recursive: true }); } catch { /* non-fatal */ }
+}
 
 export function readRegistry(registryPath: string = REGISTRY_PATH): Registry {
   try {

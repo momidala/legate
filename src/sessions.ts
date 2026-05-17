@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { lock } from 'proper-lockfile';
@@ -25,8 +25,14 @@ export interface SessionMap {
   sessions: Record<string, SessionEntry>;
 }
 
-const SESSIONS_DIR = join(homedir(), '.config', 'prefect');
+const SESSIONS_DIR = join(homedir(), '.config', 'legate');
 export const SESSIONS_PATH = join(SESSIONS_DIR, 'sessions.json');
+
+// One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ on first run
+const OLD_SESSIONS_DIR = join(homedir(), '.config', 'prefect');
+if (!existsSync(SESSIONS_DIR) && existsSync(OLD_SESSIONS_DIR)) {
+  try { cpSync(OLD_SESSIONS_DIR, SESSIONS_DIR, { recursive: true }); } catch { /* non-fatal */ }
+}
 
 export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap {
   // Resolve TTL env var (with deprecation warning) before file I/O so the warning

@@ -127,14 +127,14 @@ test('Bogus subcommand exits 1 with usage', () => {
   }
 });
 
-test('add-server creates ~/.config/prefect/servers.json under HOME=tempdir', () => {
+test('add-server creates ~/.config/legate/servers.json under HOME=tempdir', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status, stderr } = runCli(dir, env, 'add-server', 'local', 'localhost', '4096', 'vllm', 'qwen3');
     assert.equal(status, 0);
-    assert.ok(existsSync(join(dir, '.config', 'prefect', 'servers.json')));
-    const reg = JSON.parse(readFileSync(join(dir, '.config', 'prefect', 'servers.json'), 'utf8'));
+    assert.ok(existsSync(join(dir, '.config', 'legate', 'servers.json')));
+    const reg = JSON.parse(readFileSync(join(dir, '.config', 'legate', 'servers.json'), 'utf8'));
     assert.deepEqual(reg.servers[0], { name: 'local', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3' });
     assert.equal(typeof reg.servers[0].port, 'number');
     assert.match(stderr, /Registered server 'local'/);
@@ -184,9 +184,9 @@ test('remove-server removes existing entry and exits 0', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
-    mkdirSync(join(dir, '.config', 'prefect'), { recursive: true });
+    mkdirSync(join(dir, '.config', 'legate'), { recursive: true });
     writeFileSync(
-      join(dir, '.config', 'prefect', 'servers.json'),
+      join(dir, '.config', 'legate', 'servers.json'),
       JSON.stringify({ servers: [
         { name: 'local', host: 'h1', port: 4096, providerID: 'vllm', modelID: 'qwen3' },
         { name: 'dev', host: 'h2', port: 5000, providerID: 'ollama', modelID: 'llama3' },
@@ -194,7 +194,7 @@ test('remove-server removes existing entry and exits 0', () => {
     );
     const { status, stdout } = runCli(dir, env, 'remove-server', 'local');
     assert.equal(status, 0);
-    const reg = JSON.parse(readFileSync(join(dir, '.config', 'prefect', 'servers.json'), 'utf8'));
+    const reg = JSON.parse(readFileSync(join(dir, '.config', 'legate', 'servers.json'), 'utf8'));
     assert.equal(reg.servers.length, 1);
     assert.equal(reg.servers[0].name, 'dev');
     assert.match(stdout, /Removed server 'local'/);
@@ -231,9 +231,9 @@ test('list-servers prints tabular output to stdout when entries exist', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
-    mkdirSync(join(dir, '.config', 'prefect'), { recursive: true });
+    mkdirSync(join(dir, '.config', 'legate'), { recursive: true });
     writeFileSync(
-      join(dir, '.config', 'prefect', 'servers.json'),
+      join(dir, '.config', 'legate', 'servers.json'),
       JSON.stringify({ servers: [
         { name: 'local', host: 'h1', port: 4096, providerID: 'vllm', modelID: 'qwen3' },
         { name: 'dev', host: 'h2', port: 5000, providerID: 'ollama', modelID: 'llama3' },
@@ -322,7 +322,7 @@ test('MULTI-11: add-server --max-sessions stores integer in registry', () => {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status } = runCli(dir, env, 'add-server', 'local', 'localhost', '4096', 'vllm', 'qwen3', '--max-sessions', '5');
     assert.equal(status, 0);
-    const reg = JSON.parse(readFileSync(join(dir, '.config', 'prefect', 'servers.json'), 'utf8'));
+    const reg = JSON.parse(readFileSync(join(dir, '.config', 'legate', 'servers.json'), 'utf8'));
     assert.equal(reg.servers[0].maxSessions, 5);
     assert.equal(typeof reg.servers[0].maxSessions, 'number');
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -333,7 +333,7 @@ test('MULTI-11: add-server without --max-sessions stores no maxSessions field', 
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     runCli(dir, env, 'add-server', 'local', 'localhost', '4096', 'vllm', 'qwen3');
-    const reg = JSON.parse(readFileSync(join(dir, '.config', 'prefect', 'servers.json'), 'utf8'));
+    const reg = JSON.parse(readFileSync(join(dir, '.config', 'legate', 'servers.json'), 'utf8'));
     assert.ok(!('maxSessions' in reg.servers[0]), 'maxSessions must not appear when not provided');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -362,9 +362,9 @@ test('MULTI-11: list-servers shows CAPACITY column header', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
-    mkdirSync(join(dir, '.config', 'prefect'), { recursive: true });
+    mkdirSync(join(dir, '.config', 'legate'), { recursive: true });
     writeFileSync(
-      join(dir, '.config', 'prefect', 'servers.json'),
+      join(dir, '.config', 'legate', 'servers.json'),
       JSON.stringify({ servers: [{ name: 'local', host: 'h', port: 4096, providerID: 'vllm', modelID: 'qwen3' }] }, null, 2) + '\n',
     );
     const { status, stdout } = runCli(dir, env, 'list-servers');
@@ -378,9 +378,9 @@ test('MULTI-11: list-servers shows numeric capacity for capped server', () => {
   const dir = freshTmp();
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
-    mkdirSync(join(dir, '.config', 'prefect'), { recursive: true });
+    mkdirSync(join(dir, '.config', 'legate'), { recursive: true });
     writeFileSync(
-      join(dir, '.config', 'prefect', 'servers.json'),
+      join(dir, '.config', 'legate', 'servers.json'),
       JSON.stringify({ servers: [{ name: 'local', host: 'h', port: 4096, providerID: 'vllm', modelID: 'qwen3', maxSessions: 4 }] }, null, 2) + '\n',
     );
     const { status, stdout } = runCli(dir, env, 'list-servers');
@@ -427,9 +427,9 @@ test('MULTI-09: init silent when servers already registered', () => {
   try {
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     // Pre-populate registry
-    mkdirSync(join(dir, '.config', 'prefect'), { recursive: true });
+    mkdirSync(join(dir, '.config', 'legate'), { recursive: true });
     writeFileSync(
-      join(dir, '.config', 'prefect', 'servers.json'),
+      join(dir, '.config', 'legate', 'servers.json'),
       JSON.stringify({ servers: [{ name: 'local', host: 'localhost', port: 4096, providerID: 'ollama', modelID: 'qwen2.5-coder' }] }, null, 2) + '\n',
     );
     const { status, stderr } = runCli(dir, env, 'init');
