@@ -1,12 +1,12 @@
 # Agent Instructions
 
-This is the Prefect MCP server — a TypeScript project that exposes OpenCode's HTTP API as Claude Code tools.
+This is the Legate MCP server — a TypeScript project that exposes OpenCode's HTTP API as Claude Code tools.
 
 ## Core Workflow
 
-1. **CREATE SESSION** - `prefect_create_session` with explicit `directory` parameter
-2. **RUN PROMPT** - `prefect_run` with task description  
-3. **GET DIFF** - `prefect_get_diff` to see changes
+1. **CREATE SESSION** - `legate_create_session` with explicit `directory` parameter
+2. **RUN PROMPT** - `legate_run` with task description  
+3. **GET DIFF** - `legate_get_diff` to see changes
 4. **REVIEW & TEST** - Check diff and run project tests/build
 5. **DECIDE** - Commit if good, correct if needed, or fork/abort as appropriate
 
@@ -18,9 +18,9 @@ This is the Prefect MCP server — a TypeScript project that exposes OpenCode's 
 - `npm run test` - Run all tests
 
 ### Configuration
-- `PREFECT_SERVER_URL` (default: `http://localhost:4096`) - OpenCode API endpoint
-- `PREFECT_TIMEOUT_MS` (default: 120000) - Timeout for `prefect_run`
-- `PREFECT_DEFAULT_PROJECT` - Working directory for auto-started OpenCode instances
+- `LEGATE_SERVER_URL` (default: `http://localhost:4096`) - OpenCode API endpoint
+- `LEGATE_TIMEOUT_MS` (default: 120000) - Timeout for `legate_run`
+- `LEGATE_DEFAULT_PROJECT` - Working directory for auto-started OpenCode instances
 
 ### Critical Constraints
 - **Always pass `directory` explicitly** to all tools - never rely on defaults
