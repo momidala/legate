@@ -412,17 +412,17 @@ servers.legate = LEGATE_ENTRY;  // was: servers.prefect
 | A1 | The `mcpServers` key in Claude Code's internal routing uses the `McpServer({ name })` value for tool namespacing | Architecture Patterns | If tool names are independent of McpServer name, then `McpServer({ name: 'legate' })` change doesn't affect tool name visibility in Claude Code — but the tool names themselves (registered as `legate_*`) still control what Claude Code sees in the tool list, so risk is LOW |
 | A2 | `@momidala/legate` name is available on npm and momidala org has publish rights | Runtime State | Verified: npm returns 404 for `@momidala/legate`, confirming it's not taken. Org rights are [ASSUMED] based on existing `@momidala/prefect` ownership |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Warning flag naming convention for new PREFECT_ → LEGATE_ flags**
    - What we know: Existing flags are `warnedPassword`, `warnedUsername`, `warnedDefaultProject`
    - What's unclear: Should new flags be `warnedPrefectPassword` (distinguishes from `warnedPassword` for OPENCODE_) or should we consolidate?
-   - Recommendation: Use separate flags (`warnedPrefectPassword`, `warnedPrefectUsername`, etc.) so the OPENCODE_ and PREFECT_ deprecation warnings fire independently. Both can fire if user has set both old vars.
+   - RESOLVED: Use separate flags (`warnedPrefectPassword`, `warnedPrefectUsername`, etc.) so the OPENCODE_ and PREFECT_ deprecation warnings fire independently. Both can fire if user has set both old vars.
 
 2. **`prefect_session_delete` description mentions `prefect_session_rename`**
    - What we know: Line 734 of index.ts has `Consider using prefect_session_rename to archive instead` in a tool description
    - What's unclear: Should cross-references inside tool descriptions also be updated?
-   - Recommendation: Yes — update all cross-tool references in descriptions. Claude Code reads these descriptions and users see them in tool call results. `Consider using legate_session_rename` is more consistent.
+   - RESOLVED: Yes — update all cross-tool references in descriptions. Claude Code reads these descriptions and users see them in tool call results. `Consider using legate_session_rename` is more consistent.
 
 ## Environment Availability
 
