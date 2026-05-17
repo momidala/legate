@@ -25,7 +25,7 @@ Rename the package from @momidala/prefect to @momidala/legate across all surface
 
 ### Documentation (DOC)
 
-- [ ] **DOC-01**: README updated — package name, binary names, env var names, install instructions (`npm install -g @momidala/legate`), tool name examples, migration note for existing `@momidala/prefect` users explaining the rename and soft env var migration path
+- [ ] **DOC-01**: All user-facing docs updated — README.md, EXAMPLE_CLAUDE.md, AGENTS.md, examples/test-task.md, examples/uat-v2.md — reflecting new package name, binary names (`legate` / `legate-mcp`), env var names (`LEGATE_*`), tool names (`legate_*`), install instructions (`npm install -g @momidala/legate`), and migration note for existing `@momidala/prefect` users
 - [ ] **DOC-02**: Add `.gitattributes` with `*.ts linguist-language=TypeScript` to fix GitHub's misclassification of TypeScript files as JavaScript (caused by `#!/usr/bin/env node` shebang heuristic)
 
 ---
@@ -49,6 +49,14 @@ Rename the package from @momidala/prefect to @momidala/legate across all surface
 
 | Requirement | Phase | Plan |
 |-------------|-------|------|
-| RENAME-01..04 | TBD | TBD |
-| SKILL-01..05 | TBD | TBD |
-| DOC-01..02 | TBD | TBD |
+| RENAME-01 | Phase 5 | TBD |
+| RENAME-02 | Phase 5 | TBD |
+| RENAME-03 | Phase 5 | TBD |
+| RENAME-04 | Phase 5 | TBD |
+| DOC-01 | Phase 5 | TBD |
+| DOC-02 | Phase 5 | TBD |
+| SKILL-01 | Phase 6 | TBD |
+| SKILL-02 | Phase 6 | TBD |
+| SKILL-03 | Phase 6 | TBD |
+| SKILL-04 | Phase 6 | TBD |
+| SKILL-05 | Phase 6 | TBD |
