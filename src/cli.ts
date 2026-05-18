@@ -263,6 +263,12 @@ switch (subcommand) {
       const config: McpJson = { mcpServers: { legate: LEGATE_ENTRY } };
       writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n');
       console.error('Created .mcp.json with legate entry');
+      try {
+        installSkillCards(join(homedir(), '.claude', 'commands'));
+        console.error('Installed /legate and /legate-update skill cards');
+      } catch (err) {
+        console.error(`Warning: skill cards not installed — ${(err as Error).message}`);
+      }
       printOnboardingIfNoServers();
       process.exit(0);
     }
@@ -290,6 +296,12 @@ switch (subcommand) {
     existing.mcpServers = servers;
     writeFileSync(mcpJsonPath, JSON.stringify(existing, null, 2) + '\n');
     console.error(force ? 'Updated legate entry in .mcp.json' : 'Added legate entry to .mcp.json');
+    try {
+      installSkillCards(join(homedir(), '.claude', 'commands'));
+      console.error('Installed /legate and /legate-update skill cards');
+    } catch (err) {
+      console.error(`Warning: skill cards not installed — ${(err as Error).message}`);
+    }
     printOnboardingIfNoServers();
     process.exit(0);
   }
