@@ -22,7 +22,7 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
 ### v2.2 Legate
 
 - [ ] **Phase 5: Rename** — Rename package, binaries, tool names, and env vars from prefect to legate across all source files and documentation
-- [ ] **Phase 6: Skill Card** — Add `legate init` command that installs condensed reference skill cards to `~/.claude/commands/`
+- [x] **Phase 6: Skill Card** — Add `legate init` command that installs condensed reference skill cards to `~/.claude/commands/` (completed 2026-05-18)
 
 ## Phase Details
 
@@ -52,7 +52,7 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
   4. Running `legate uninstall-command` removes both installed files
 **Plans**: 2 plans
 - [x] 06-01-PLAN.md — Wave 0 TDD: add failing SKILL-01..SKILL-05 tests in src/cli.test.ts and retarget the existing SELFUP warning-message and bogus-usage assertions to the new combined-files wording
-- [ ] 06-02-PLAN.md — Implementation: add LEGATE_SKILL_CARD_STATIC constant + buildWorkersSection helper + installSkillCards helper to src/cli.ts; extend handleInstallCommand and handleUninstallCommand; wire installSkillCards into the init case (turns Plan 01 RED tests GREEN)
+- [x] 06-02-PLAN.md — Implementation: add LEGATE_SKILL_CARD_STATIC constant + buildWorkersSection helper + installSkillCards helper to src/cli.ts; extend handleInstallCommand and handleUninstallCommand; wire installSkillCards into the init case (turns Plan 01 RED tests GREEN)
 
 ## Progress
 
@@ -63,4 +63,4 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
 | 3. Checkpoint Schemas + Delivery | v2.1 | 1/1 | Complete | 2026-05-11 |
 | 4. Handoff Trigger | v2.1 | 1/1 | Complete | 2026-05-12 |
 | 5. Rename | v2.2 | 0/3 | Planned | - |
-| 6. Skill Card | v2.2 | 1/2 | In Progress|  |
+| 6. Skill Card | v2.2 | 2/2 | Complete   | 2026-05-18 |

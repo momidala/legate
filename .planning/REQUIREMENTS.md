@@ -18,7 +18,7 @@ Rename the package from `@momidala/prefect` to `legate` (unscoped) across all su
 ### Skills Wrapper (SKILL)
 
 - [x] **SKILL-01**: `legate init` installs a skill file to `~/.claude/commands/legate.md` — a condensed reference card covering all tools, parameters, and the canonical loop in minimal tokens
-- [ ] **SKILL-02**: Skill file replaces verbose tool descriptions in Claude Code context — Claude reads the skill card instead of loading full MCP schemas
+- [x] **SKILL-02**: Skill file replaces verbose tool descriptions in Claude Code context — Claude reads the skill card instead of loading full MCP schemas
 - [x] **SKILL-03**: Skill file includes the canonical loop, available workers section (auto-generated from servers.json at install time), and one-line descriptions per tool group
 - [x] **SKILL-04**: `legate init` also installs `~/.claude/commands/legate-update.md` — triggers `npm install -g legate` via bash tool then reminds user to restart Claude Code
 - [x] **SKILL-05**: Skill files are versioned — `legate init` overwrites on reinstall to stay current; `legate uninstall-command` removes both files
