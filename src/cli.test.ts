@@ -631,3 +631,56 @@ test('SKILL-05: second legate init overwrites both skill card files', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('SKILL-03: legate.md contains canonical loop and tool table', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status } = runCli(dir, env, 'init');
+    assert.equal(status, 0);
+    const legateMd = join(dir, '.claude', 'commands', 'legate.md');
+    assert.ok(existsSync(legateMd), 'legate.md must exist after init');
+    const content = readFileSync(legateMd, 'utf8');
+    assert.match(content, /# Legate — Skill Card/);
+    assert.match(content, /## Canonical Loop/);
+    assert.match(content, /legate_create_session/);
+    assert.match(content, /legate_run/);
+    assert.match(content, /legate_session_delete/);
+    assert.match(content, /## Tools/);
+    assert.ok((content.match(/legate_[a-z_]+/g) ?? []).length >= 6, 'expected at least 6 legate_ tool refs');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL-03: legate.md workers section reflects registered servers', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    // Pre-populate registry
+    runCli(dir, env, 'add-server', 'thor', 'localhost', '4096', 'vllm', 'qwen3-coder');
+    // Run init
+    const { status } = runCli(dir, env, 'init');
+    assert.equal(status, 0);
+    const content = readFileSync(join(dir, '.claude', 'commands', 'legate.md'), 'utf8');
+    assert.match(content, /## Available Workers/);
+    assert.match(content, /\*\*thor\*\* — vllm\/qwen3-coder, localhost:4096/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL-03: legate.md workers section shows placeholder when registry empty', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    // No add-server calls — registry is empty
+    const { status } = runCli(dir, env, 'init');
+    assert.equal(status, 0);
+    const content = readFileSync(join(dir, '.claude', 'commands', 'legate.md'), 'utf8');
+    assert.match(content, /## Available Workers/);
+    assert.match(content, /no servers registered/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
