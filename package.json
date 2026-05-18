@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "tsc && chmod 755 build/index.js build/cli.js",
-    "test": "tsc && node --test build/parts.test.js build/cli.test.js build/auth.test.js build/diff-patch.test.js build/session-command.test.js build/autostart.test.js build/registry.test.js build/sessions.test.js",
+    "test": "tsc && node --test build/parts.test.js build/cli.test.js build/auth.test.js build/diff-patch.test.js build/session-command.test.js build/autostart.test.js build/registry.test.js build/sessions.test.js build/index.test.js",
     "postinstall": "node ./build/cli.js install-command",
     "preuninstall": "node ./build/cli.js uninstall-command"
   },
