@@ -43,6 +43,48 @@ npm install -g legate@latest && \\
 \`\`\`
 `;
 
+const LEGATE_SKILL_CARD_STATIC: string = `# Legate — Skill Card
+
+**Install:** \`npm install -g legate\`  **Update:** \`/legate-update\`
+
+## Canonical Loop
+1. CREATE: \`legate_create_session({title, directory, server?})\` — returns sessionId
+2. RUN: \`legate_run({sessionId, prompt})\` — blocks until agent finishes
+3. DIFF: \`legate_get_diff({sessionId})\` — inspect FileDiff[]
+4. REVIEW: read modified files yourself
+5. TEST: run build/test commands via Bash tool — never delegate testing
+6. DECIDE: commit if good; \`legate_run("correct: ...")\` if not; \`legate_fork\`/\`legate_revert\` if off-rails
+7. DELETE: \`legate_session_delete({sessionId})\` — required hygiene every time
+8. ABORT: \`legate_abort({sessionId})\` — emergency stop if legate_run hangs
+
+## Tools (40 total — prefix all with legate_)
+| Group | Tools |
+|-------|-------|
+| Core loop | create_session, run, prompt_async, abort, get_diff, fork, revert, session_delete, approve_permission |
+| Session mgmt | session_list, session_status, session_get, session_rename, session_init, session_children, session_unrevert |
+| Content | session_messages, session_message, session_command, session_summarize, session_todo, session_share, session_unshare |
+| Delegation | delegate, dispatch, inspect, await |
+| Discovery | list_agents, list_providers, list_tools, list_commands, list_mcp_servers, get_config |
+| File/code | find_file, find_symbol, get_file_content, file_status, vcs_info |
+| Shell/infra | session_shell, inject_mcp_server |
+
+## Rules
+- Always pass \`directory\` explicitly to create_session — never rely on server default
+- Delete every session when done — sessions accumulate indefinitely if not cleaned
+- Never commit from inside a legate_run call — you commit, OpenCode edits
+- git is the safety net: \`git checkout -- .\` resets bad output
+- Pass \`server: "<name>"\` to target a specific worker from the list below
+`;
+
+function buildWorkersSection(): string {
+  const { servers } = readRegistry();
+  const bullets = servers.map(
+    (s) => `- **${s.name}** — ${s.providerID}/${s.modelID}, ${s.host}:${s.port}, capacity: ${s.maxSessions ?? 'unlimited'}`
+  );
+  const content = bullets.length > 0 ? bullets.join('\n') : '*(no servers registered — run: legate add-server)*';
+  return `\n## Available Workers\n\n${content}\n`;
+}
+
 function updateClaudemdWorkers(cwd: string): void {
   const claudePath = resolve(cwd, 'CLAUDE.md');
   const existing = existsSync(claudePath) ? readFileSync(claudePath, 'utf8') : '';
