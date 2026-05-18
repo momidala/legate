@@ -56,7 +56,7 @@ export function addServer(entry: ServerEntry, registryPath: string = REGISTRY_PA
   }
   const existing = reg.servers.findIndex((s) => s.name === entry.name);
   if (existing !== -1) {
-    console.log(`Updated existing server '${entry.name}'.`);
+    console.error(`Updated existing server '${entry.name}'.`);
     reg.servers[existing] = entry;
   } else {
     reg.servers.push(entry);
@@ -72,7 +72,7 @@ export function removeServer(name: string, registryPath: string = REGISTRY_PATH)
     throw new Error(`no server named '${name}' in registry`);
   }
   writeRegistry(reg, registryPath);
-  console.log(`Removed server '${name}'.`);
+  console.error(`Removed server '${name}'.`);
 }
 
 export function listServers(registryPath: string = REGISTRY_PATH): void {

@@ -101,17 +101,19 @@ function updateClaudemdWorkers(cwd: string): void {
 
   let updated: string;
   if (startIdx === -1) {
-    // Section absent — append (with separator if file is non-empty)
-    const sep = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    updated = existing + sep + '\n' + newSection;
+    // Section absent — append; only add separator when file already has content
+    const sep = existing.length > 0 ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
+    updated = existing + sep + newSection;
   } else {
     // Find end of section (next ## heading or EOF)
     const endIdx = fileLines.findIndex((l, i) => i > startIdx && /^## /.test(l));
     const tail = endIdx === -1 ? [] : fileLines.slice(endIdx);
+    const sectionLines = newSection.split('\n');
+    if (sectionLines[sectionLines.length - 1] === '') sectionLines.pop();
     updated = [
       ...fileLines.slice(0, startIdx),
-      ...newSection.split('\n'),
-      ...(tail.length > 0 ? ['', ...tail] : []),
+      ...sectionLines,
+      ...(tail.length > 0 ? ['', ...tail] : ['']),
     ].join('\n');
   }
 

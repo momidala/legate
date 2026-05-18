@@ -14,8 +14,8 @@ function freshTmp(): string {
   return mkdtempSync(join(tmpdir(), 'legate-cli-'));
 }
 
-function runInit(cwd: string, ...args: string[]): { status: number; stderr: string } {
-  const res = spawnSync('node', [CLI, ...args], { cwd, encoding: 'utf8' });
+function runInit(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]): { status: number; stderr: string } {
+  const res = spawnSync('node', [CLI, ...args], { cwd, encoding: 'utf8', env });
   return { status: res.status ?? -1, stderr: res.stderr };
 }
 
@@ -28,7 +28,8 @@ function runCli(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]):
 test('Case 1: creates .mcp.json when none exists', () => {
   const dir = freshTmp();
   try {
-    const { status } = runInit(dir, 'init');
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status } = runInit(dir, env, 'init');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
     assert.ok(cfg.mcpServers.legate);
@@ -44,10 +45,11 @@ test('Case 1: creates .mcp.json when none exists', () => {
 test('Case 2: adds legate entry, preserves siblings', () => {
   const dir = freshTmp();
   try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
       mcpServers: { other: { command: 'sh', args: ['-c', 'echo hi'] } },
     }));
-    const { status } = runInit(dir, 'init');
+    const { status } = runInit(dir, env, 'init');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
     assert.ok(cfg.mcpServers.legate);
@@ -61,10 +63,11 @@ test('Case 2: adds legate entry, preserves siblings', () => {
 test('Case 3: exits 1 when legate already present without --force', () => {
   const dir = freshTmp();
   try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
       mcpServers: { legate: { command: 'old', args: [] } },
     }));
-    const { status, stderr } = runInit(dir, 'init');
+    const { status, stderr } = runInit(dir, env, 'init');
     assert.equal(status, 1);
     assert.match(stderr, /--force/);
     // Verify .mcp.json untouched
@@ -78,13 +81,14 @@ test('Case 3: exits 1 when legate already present without --force', () => {
 test('Case 4: --force overwrites only the legate key', () => {
   const dir = freshTmp();
   try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
       mcpServers: {
         legate: { command: 'old', args: [] },
         other: { command: 'sh' },
       },
     }));
-    const { status } = runInit(dir, 'init', '--force');
+    const { status } = runInit(dir, env, 'init', '--force');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
     assert.equal(cfg.mcpServers.legate.command, 'node');
@@ -97,11 +101,12 @@ test('Case 4: --force overwrites only the legate key', () => {
 test('Root-level non-mcpServers keys are preserved', () => {
   const dir = freshTmp();
   try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     writeFileSync(join(dir, '.mcp.json'), JSON.stringify({
       theme: 'dark',
       mcpServers: { other: { command: 'sh' } },
     }));
-    const { status } = runInit(dir, 'init');
+    const { status } = runInit(dir, env, 'init');
     assert.equal(status, 0);
     const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
     assert.equal(cfg.theme, 'dark');
@@ -192,12 +197,12 @@ test('remove-server removes existing entry and exits 0', () => {
         { name: 'dev', host: 'h2', port: 5000, providerID: 'ollama', modelID: 'llama3' },
       ] }, null, 2) + '\n',
     );
-    const { status, stdout } = runCli(dir, env, 'remove-server', 'local');
+    const { status, stderr } = runCli(dir, env, 'remove-server', 'local');
     assert.equal(status, 0);
     const reg = JSON.parse(readFileSync(join(dir, '.config', 'legate', 'servers.json'), 'utf8'));
     assert.equal(reg.servers.length, 1);
     assert.equal(reg.servers[0].name, 'dev');
-    assert.match(stdout, /Removed server 'local'/);
+    assert.match(stderr, /Removed server 'local'/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
