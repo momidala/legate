@@ -97,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-16 — v2.2 milestone started. Rename @momidala/prefect → @momidala/legate with skill card installation.*
+*Last updated: 2026-05-18 — Phase 06 complete. legate init now installs /legate and /legate-update skill cards into ~/.claude/commands/ (SKILL-01 through SKILL-05). v2.2 milestone complete.*
