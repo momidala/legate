@@ -565,7 +565,7 @@ test('SELFUP: install-command warns to stderr and exits 0 when mkdir/write fails
     writeFileSync(join(dir, '.claude'), 'i am a file not a directory');
     const { status, stderr } = runCliAsGlobal(dir, 'install-command');
     assert.equal(status, 0, 'D-07: must exit 0 even on failure');
-    assert.match(stderr, /Warning: legate-update command not installed —/);
+    assert.match(stderr, /Warning: legate commands not installed —/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -577,8 +577,8 @@ test('SELFUP: legate bogus usage lists install-command and uninstall-command', (
     const env = { ...process.env, HOME: dir, USERPROFILE: dir };
     const { status, stderr } = runCli(dir, env, 'bogus');
     assert.equal(status, 1);
-    assert.match(stderr, /install-command\s+Install \/legate-update Claude command/);
-    assert.match(stderr, /uninstall-command\s+Remove \/legate-update Claude command/);
+    assert.match(stderr, /install-command\s+Install \/legate and \/legate-update Claude commands/);
+    assert.match(stderr, /uninstall-command\s+Remove \/legate and \/legate-update Claude commands/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -680,6 +680,27 @@ test('SKILL-03: legate.md workers section shows placeholder when registry empty'
     const content = readFileSync(join(dir, '.claude', 'commands', 'legate.md'), 'utf8');
     assert.match(content, /## Available Workers/);
     assert.match(content, /no servers registered/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL-05: uninstall-command removes both legate.md and legate-update.md', () => {
+  const dir = freshTmp();
+  try {
+    // Install both files
+    const { status: installStatus } = runCliAsGlobal(dir, 'install-command');
+    assert.equal(installStatus, 0, 'install-command must exit 0');
+    const legateMd = join(dir, '.claude', 'commands', 'legate.md');
+    const legateUpdateMd = join(dir, '.claude', 'commands', 'legate-update.md');
+    assert.ok(existsSync(legateMd), 'precondition: legate.md must exist after install-command');
+    assert.ok(existsSync(legateUpdateMd), 'precondition: legate-update.md must exist after install-command');
+    // Uninstall
+    const { status: uninstallStatus, stderr: uninstallStderr } = runCliAsGlobal(dir, 'uninstall-command');
+    assert.equal(uninstallStatus, 0, 'uninstall-command must exit 0');
+    assert.equal(uninstallStderr, '');
+    assert.equal(existsSync(legateMd), false, 'legate.md must be removed by uninstall-command');
+    assert.equal(existsSync(legateUpdateMd), false, 'legate-update.md must be removed by uninstall-command');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
