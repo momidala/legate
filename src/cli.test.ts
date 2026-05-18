@@ -583,3 +583,51 @@ test('SELFUP: legate bogus usage lists install-command and uninstall-command', (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// SKILL-01..SKILL-05: skill card installation tests
+
+test('SKILL-01: legate init writes ~/.claude/commands/legate.md', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status } = runCli(dir, env, 'init');
+    assert.equal(status, 0);
+    assert.ok(existsSync(join(dir, '.claude', 'commands', 'legate.md')), 'legate.md must be written by init');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL-04: legate init writes ~/.claude/commands/legate-update.md', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    const { status } = runCli(dir, env, 'init');
+    assert.equal(status, 0);
+    assert.ok(existsSync(join(dir, '.claude', 'commands', 'legate-update.md')), 'legate-update.md must be written by init');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL-05: second legate init overwrites both skill card files', () => {
+  const dir = freshTmp();
+  try {
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir };
+    // First init
+    const { status: status1 } = runCli(dir, env, 'init');
+    assert.equal(status1, 0);
+    // Mutate legate.md to contain a stale marker
+    const legateMd = join(dir, '.claude', 'commands', 'legate.md');
+    assert.ok(existsSync(legateMd), 'legate.md must exist after first init');
+    writeFileSync(legateMd, 'STALE_MARKER');
+    // Second init
+    const { status: status2 } = runCli(dir, env, 'init', '--force');
+    assert.equal(status2, 0);
+    // Content must be overwritten — STALE_MARKER must NOT appear
+    const content = readFileSync(legateMd, 'utf8');
+    assert.ok(!content.includes('STALE_MARKER'), 'second init must overwrite legate.md — STALE_MARKER must be gone');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
