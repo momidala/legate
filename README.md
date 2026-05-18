@@ -82,7 +82,7 @@ Also included:
 ### Option 1: Global install (recommended)
 
 ```bash
-npm install -g legate
+npm install -g @momidala/legate
 cd /your/project
 legate init
 ```
@@ -333,29 +333,31 @@ legate_create_session({ title: "my task", server: "remote", directory: "/path/to
 
 Omit `server` to use the first registered server. Claude Code reads the `## Available Workers` section in `CLAUDE.md` to know which names are available.
 
-## Self-Update
+## Skill Cards
 
-When you install legate globally, the `/legate-update` Claude Code slash command is installed automatically:
+`legate init` installs two Claude Code slash commands into `~/.claude/commands/`:
 
-```bash
-npm install -g legate
-# ~/.claude/commands/legate-update.md is now installed
+### `/legate` — canonical loop reference
+
+Run this at the start of any Claude Code session where you plan to delegate work:
+
+```
+/legate
 ```
 
-To update legate from inside Claude Code, run:
+This loads the canonical 8-step create → run → diff → correct loop, a compact table of all 40 tools, and the current list of registered servers into your conversation. Claude uses this reference card instead of enumerating the full MCP tool schemas — keeping context lean and the workflow clear.
+
+### `/legate-update` — self-update
+
+Updates legate to the latest version from inside Claude Code:
 
 ```
 /legate-update
 ```
 
-The command runs `npm install -g legate@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
+The command runs `npm install -g @momidala/legate@latest`, prints the new version number, and reminds you to restart Claude Code to pick up the changes.
 
-When you uninstall legate, the command file is removed automatically:
-
-```bash
-npm uninstall -g legate
-# ~/.claude/commands/legate-update.md is removed
-```
+Both files are installed automatically on `npm install -g @momidala/legate` and removed on `npm uninstall -g @momidala/legate`. You can also reinstall them at any time with `legate init`.
 
 ## Agent Checkpointing
 
@@ -402,7 +404,9 @@ These are safety nets, not a substitute for explicit deletion.
 
 ## Day-to-Day Use
 
-See `CLAUDE.md` for the canonical create -> run -> diff -> test -> correct -> delete loop. Claude Code reads `CLAUDE.md` automatically at session start, so you don't need to repeat the instructions.
+Run `/legate` at the start of any session where you plan to delegate work. This loads the canonical 8-step loop reference and a compact tool table into your conversation — Claude uses this instead of enumerating all 40 MCP tool schemas individually.
+
+See `CLAUDE.md` for the full loop instructions. Claude Code reads `CLAUDE.md` automatically at session start.
 
 ## WSL Note
 
@@ -448,7 +452,7 @@ npm uninstall -g @momidala/prefect
 **Step 2 — Install the new package:**
 
 ```bash
-npm install -g legate
+npm install -g @momidala/legate
 ```
 
 **Step 3 — Re-run `legate init` with `--force` to update your `.mcp.json`:**
