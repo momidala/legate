@@ -51,7 +51,7 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
   3. The installed `legate.md` card includes the canonical loop, one-line descriptions for each tool group, and an auto-generated workers section reflecting the current servers.json
   4. Running `legate uninstall-command` removes both installed files
 **Plans**: 2 plans
-- [ ] 06-01-PLAN.md — Wave 0 TDD: add failing SKILL-01..SKILL-05 tests in src/cli.test.ts and retarget the existing SELFUP warning-message and bogus-usage assertions to the new combined-files wording
+- [x] 06-01-PLAN.md — Wave 0 TDD: add failing SKILL-01..SKILL-05 tests in src/cli.test.ts and retarget the existing SELFUP warning-message and bogus-usage assertions to the new combined-files wording
 - [ ] 06-02-PLAN.md — Implementation: add LEGATE_SKILL_CARD_STATIC constant + buildWorkersSection helper + installSkillCards helper to src/cli.ts; extend handleInstallCommand and handleUninstallCommand; wire installSkillCards into the init case (turns Plan 01 RED tests GREEN)
 
 ## Progress
@@ -63,4 +63,4 @@ Full archive: `.planning/milestones/v2.1-ROADMAP.md`
 | 3. Checkpoint Schemas + Delivery | v2.1 | 1/1 | Complete | 2026-05-11 |
 | 4. Handoff Trigger | v2.1 | 1/1 | Complete | 2026-05-12 |
 | 5. Rename | v2.2 | 0/3 | Planned | - |
-| 6. Skill Card | v2.2 | 0/2 | Planned | - |
+| 6. Skill Card | v2.2 | 1/2 | In Progress|  |
