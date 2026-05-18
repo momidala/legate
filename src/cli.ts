@@ -127,8 +127,8 @@ function usageAndExit(): never {
     '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
     '  remove-server <name>                    Remove a named server from the registry\n' +
     '  list-servers                            List all registered servers\n' +
-    '  install-command                         Install /legate-update Claude command (global installs only)\n' +
-    '  uninstall-command                       Remove /legate-update Claude command (global installs only)\n' +
+    '  install-command                         Install /legate and /legate-update Claude commands (global installs only)\n' +
+    '  uninstall-command                       Remove /legate and /legate-update Claude commands (global installs only)\n' +
     '  version                                 Print the installed version',
   );
   process.exit(1);
@@ -186,23 +186,27 @@ function handleListServers(): never {
   process.exit(0);
 }
 
+function installSkillCards(destDir: string): void {
+  mkdirSync(destDir, { recursive: true });
+  writeFileSync(join(destDir, 'legate.md'), LEGATE_SKILL_CARD_STATIC + buildWorkersSection());
+  writeFileSync(join(destDir, 'legate-update.md'), LEGATE_UPDATE_COMMAND_CONTENT);
+}
+
 function handleInstallCommand(): never {
   // D-05: silent skip for non-global installs — do not pollute ~/.claude/commands/
   if (!isGlobal) process.exit(0);
 
   const destDir = join(homedir(), '.claude', 'commands');
-  const dest = join(destDir, 'legate-update.md');
 
   try {
-    // D-06: create ~/.claude/commands/ if it does not exist
-    mkdirSync(destDir, { recursive: true });
-    writeFileSync(dest, LEGATE_UPDATE_COMMAND_CONTENT);
+    // D-06: create ~/.claude/commands/ if it does not exist; write both skill card files
+    installSkillCards(destDir);
     if (!process.env.npm_lifecycle_event) {
-      console.error(`Installed /legate-update command to ${dest}`);
+      console.error(`Installed /legate and /legate-update commands to ${destDir}`);
     }
   } catch (err) {
     // D-07: warn to stderr, exit 0 — broken command install must NEVER block npm install
-    console.error(`Warning: legate-update command not installed — ${(err as Error).message}`);
+    console.error(`Warning: legate commands not installed — ${(err as Error).message}`);
     process.exit(0);
   }
   process.exit(0);
@@ -212,10 +216,11 @@ function handleUninstallCommand(): never {
   // D-05: silent skip for non-global installs
   if (!isGlobal) process.exit(0);
 
-  const dest = join(homedir(), '.claude', 'commands', 'legate-update.md');
+  const destDir = join(homedir(), '.claude', 'commands');
   try {
     // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
-    rmSync(dest, { force: true });
+    rmSync(join(destDir, 'legate.md'), { force: true });
+    rmSync(join(destDir, 'legate-update.md'), { force: true });
   } catch {
     // D-08: uninstall failures are non-fatal — exit 0 silently, no stderr
   }
