@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 // expects Plan 02 to export _resetWarnFlags from sessions.ts
-import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _resetWarnFlags } from './sessions.js';
+import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _resetWarnFlags, _runMigration } from './sessions.js';
 
 function freshTmp(): string {
   return mkdtempSync(join(tmpdir(), 'legate-sessions-'));
@@ -366,5 +366,56 @@ test('readSessionMap emits NO PREFECT_SESSION_TTL_MS warning when LEGATE_SESSION
     if (prevPrefect === undefined) delete process.env.PREFECT_SESSION_TTL_MS;
     else process.env.PREFECT_SESSION_TTL_MS = prevPrefect;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── Migration guard regression tests ────────────────────────────────────────
+// Regression for: guard was `!existsSync(dir)` but the CLI creates the dir via
+// `legate add-server` before the MCP runs — any machine that used the CLI first
+// would have the dir present with no sessions.json, silently skipping migration.
+
+test('_runMigration copies old dir when target sessions.json absent, even if target dir already exists', () => {
+  const root = freshTmp();
+  try {
+    // Simulate: CLI created ~/.config/legate/ but no sessions.json yet
+    const newDir = join(root, 'legate');
+    const newPath = join(newDir, 'sessions.json');
+    mkdirSync(newDir);
+
+    // Simulate: old ~/.config/prefect/ with a sessions.json
+    const oldDir = join(root, 'prefect');
+    mkdirSync(oldDir);
+    writeFileSync(join(oldDir, 'sessions.json'), JSON.stringify({ sessions: { 'ses_old': { server: 'x', url: 'http://localhost:4096' } } }));
+
+    _runMigration(newPath, oldDir);
+
+    assert.ok(existsSync(newPath), 'sessions.json should have been migrated');
+    const migrated = JSON.parse(readFileSync(newPath, 'utf8'));
+    assert.ok('ses_old' in migrated.sessions, 'migrated sessions should contain the old entry');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('_runMigration skips copy when target sessions.json already exists (migration already done)', () => {
+  const root = freshTmp();
+  try {
+    const newDir = join(root, 'legate');
+    const newPath = join(newDir, 'sessions.json');
+    mkdirSync(newDir);
+    // Target sessions.json already present — migration must not overwrite
+    writeFileSync(newPath, JSON.stringify({ sessions: { 'ses_existing': { server: 'y', url: 'http://localhost:4096' } } }));
+
+    const oldDir = join(root, 'prefect');
+    mkdirSync(oldDir);
+    writeFileSync(join(oldDir, 'sessions.json'), JSON.stringify({ sessions: { 'ses_old': { server: 'x', url: 'http://localhost:4096' } } }));
+
+    _runMigration(newPath, oldDir);
+
+    const after = JSON.parse(readFileSync(newPath, 'utf8'));
+    assert.ok('ses_existing' in after.sessions, 'existing entry should be preserved');
+    assert.ok(!('ses_old' in after.sessions), 'old entry should NOT have been merged in');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

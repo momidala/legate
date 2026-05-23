@@ -30,11 +30,25 @@ export interface SessionMap {
 const SESSIONS_DIR = join(homedir(), '.config', 'legate');
 export const SESSIONS_PATH = join(SESSIONS_DIR, 'sessions.json');
 
-// One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ on first run
-const OLD_SESSIONS_DIR = join(homedir(), '.config', 'prefect');
-if (!existsSync(SESSIONS_DIR) && existsSync(OLD_SESSIONS_DIR)) {
-  try { cpSync(OLD_SESSIONS_DIR, SESSIONS_DIR, { recursive: true }); } catch { /* non-fatal */ }
+/**
+ * One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ when sessions.json
+ * does not yet exist in the new location.
+ *
+ * Guard is on SESSIONS_PATH (the file), not the directory — the directory is created
+ * by `legate add-server` before the MCP ever runs, so checking directory existence
+ * would cause the migration to be silently skipped on any machine that used the CLI
+ * before the rename.
+ *
+ * @internal — exported for testing only.
+ */
+export function _runMigration(newPath: string, oldDir: string): void {
+  if (!existsSync(newPath) && existsSync(oldDir)) {
+    try { cpSync(oldDir, dirname(newPath), { recursive: true }); } catch { /* non-fatal */ }
+  }
 }
+
+const OLD_SESSIONS_DIR = join(homedir(), '.config', 'prefect');
+_runMigration(SESSIONS_PATH, OLD_SESSIONS_DIR);
 
 export function readSessionMap(sessionsPath: string = SESSIONS_PATH): SessionMap {
   // Resolve TTL env var (with deprecation warning) before file I/O so the warning
