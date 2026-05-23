@@ -166,33 +166,91 @@ server.registerTool(
 server.registerTool(
   'legate_abort',
   {
-    description: 'Abort a running OpenCode session. Returns true on success.',
+    description:
+      'Abort a running OpenCode session. Returns true on success.\n\n' +
+      'Zombie fallback: when the session is not found in local sessions.json (e.g. after a ' +
+      'context reset or crash), the tool falls through to the server HTTP endpoint directly. ' +
+      'Specify `server` to target a known server, or omit to fan out to all registered servers.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID returned from legate_create_session'),
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      server: z.string().min(1).optional().describe(
+        'Server name (from registry) to target when the session is not in local sessions.json. ' +
+        'If omitted and the session is unknown locally, all registered servers are tried.',
+      ),
     }),
   },
-  async ({ sessionId, directory }) => {
+  async ({ sessionId, directory, server: serverParam }) => {
     const dir = resolveDirectory(directory);
     try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.abort({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
+      // Fast path: session is in sessions.json — use the known URL.
+      const entry = lookupSession(sessionId);
+      if (entry) {
+        const serverUrl = entry.url;
+        const { data, error } = await getClient(serverUrl).session.abort({
+          path: { id: sessionId },
+          query: dir ? { directory: dir } : undefined,
+        });
+        if (error) {
+          if (isNotFound(error)) {
+            removeSession(sessionId);
+            throw new Error(
+              `Session ${sessionId} not found on server '${entry.server}' (${serverUrl}).\n` +
+              `The session may have been deleted or the server restarted.\n` +
+              `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
+            );
+          }
+          throw new Error(JSON.stringify(error));
+        }
+        return { content: [{ type: 'text', text: String(data) }] };
+      }
+
+      // Zombie fallback: session not in sessions.json (context reset / crash scenario).
+      // Try the specified server, or fan out to every registered server.
+      const reg = readRegistry();
+      type Target = { name: string; url: string };
+      let targets: Target[];
+      if (serverParam) {
+        const found = reg.servers.find((s) => s.name === serverParam);
+        if (!found) {
           throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
+            `Server '${serverParam}' not found in registry. Run 'legate list-servers' to see registered servers.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        targets = [{ name: found.name, url: `http://${found.host}:${found.port}` }];
+      } else {
+        targets = reg.servers.length > 0
+          ? reg.servers.map((s) => ({ name: s.name, url: `http://${s.host}:${s.port}` }))
+          : [{ name: 'default', url: BASE_URL }];
       }
-      return { content: [{ type: 'text', text: String(data) }] };
+
+      const misses: string[] = [];
+      for (const target of targets) {
+        try {
+          const { data, error } = await getClient(target.url).session.abort({
+            path: { id: sessionId },
+            query: dir ? { directory: dir } : undefined,
+          });
+          if (error) {
+            if (isNotFound(error)) { misses.push(`${target.name} (${target.url}): not found`); continue; }
+            throw new Error(JSON.stringify(error));
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: `Aborted zombie session ${sessionId} on server '${target.name}' (${target.url}). Result: ${String(data)}`,
+            }],
+          };
+        } catch (err) {
+          misses.push(`${target.name} (${target.url}): ${String(err)}`);
+        }
+      }
+
+      throw new Error(
+        `Session ${sessionId} not found in sessions.json and abort failed on all tried servers:\n` +
+        misses.map((m) => `  • ${m}`).join('\n') + '\n' +
+        `The session may have already been deleted. Verify with: curl -s http://<host>:<port>/session/status`,
+      );
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
     }
