@@ -359,6 +359,41 @@ The command runs `npm install -g @momidala/legate@latest`, prints the new versio
 
 Both files are installed automatically on `npm install -g @momidala/legate` and removed on `npm uninstall -g @momidala/legate`. You can also reinstall them at any time with `legate init`.
 
+## GSD Integration
+
+If you use [GSD (get-shit-done)](https://github.com/scottyeager/get-shit-done) for AI-driven development workflows, GSD's subagents — `gsd-executor` (spawned by `/gsd-execute-phase`) and `gsd-code-fixer` (spawned by `/gsd-code-review --fix`) — cannot call Legate out of the box. Each agent is spawned with an explicit `tools:` allowlist in its frontmatter; they inherit your project's `CLAUDE.md` instructions to delegate but have no Legate tools available to act on them.
+
+`scripts/patch-gsd-legate.sh` fixes this. It patches the two agent definition files in `~/.claude/agents/` to:
+
+1. Add `mcp__prefect__legate_*` to the `tools:` frontmatter so legate tools are actually available inside the subagent
+2. Append a `<legate_delegation>` block with precise guidance on when to delegate, the canonical create → run → diff → test → commit → delete loop, and a fallback if the Legate server is offline
+
+### Usage
+
+```bash
+# Apply patches (idempotent — safe to re-run)
+bash scripts/patch-gsd-legate.sh
+
+# Preview what would change without modifying files
+bash scripts/patch-gsd-legate.sh --dry-run
+
+# Check patch status for each agent
+bash scripts/patch-gsd-legate.sh --status
+
+# Restore originals from .pre-legate.bak backups
+bash scripts/patch-gsd-legate.sh --revert
+```
+
+If installed globally (`npm install -g @momidala/legate`), you can find the script at:
+
+```bash
+$(npm root -g)/@momidala/legate/scripts/patch-gsd-legate.sh
+```
+
+> **After `/gsd-update`:** GSD updates overwrite agent files, which removes the patches. Re-run `patch-gsd-legate.sh` after any GSD update.
+
+> **Restart required:** Claude Code must be restarted (or `/mcp` re-initialized) for changes to agent frontmatter to take effect in newly spawned subagents.
+
 ## Agent Checkpointing
 
 Legate agents (OpenCode sessions spawned via `legate_run`) can write checkpoint and handoff files to help you recover context after a long session.
@@ -420,6 +455,8 @@ If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4
 .
 ├── src/index.ts         # MCP server (40 tools)
 ├── build/               # Compiled output (gitignored)
+├── scripts/
+│   └── patch-gsd-legate.sh  # Patch GSD agents for Legate delegation
 ├── .mcp.json            # Project-scoped Claude Code registration
 ├── CLAUDE.md            # Loop instructions for Claude Code
 ├── examples/
