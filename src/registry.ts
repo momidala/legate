@@ -46,7 +46,7 @@ export function readRegistry(registryPath: string = REGISTRY_PATH): Registry {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { servers: [] };
-    throw new Error(`could not parse ${registryPath}: ${(err as Error).message}`);
+    throw new Error(`could not parse ${registryPath}: ${(err as Error).message}`, { cause: err });
   }
 }
 

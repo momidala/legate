@@ -1,0 +1,6 @@
+build/
+node_modules/
+.planning/
+.beads/
+package-lock.json
+*.md

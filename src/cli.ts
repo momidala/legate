@@ -306,6 +306,7 @@ switch (subcommand) {
     }
     printOnboardingIfNoServers();
     process.exit(0);
+    break;
   }
   case 'add-server':
     handleAddServer(args.slice(1));
@@ -326,6 +327,7 @@ switch (subcommand) {
     const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
     console.log(version);
     process.exit(0);
+    break;
   }
   default:
     usageAndExit();
