@@ -19,13 +19,11 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
-      # `build/` is gitignored and does not exist on a fresh checkout. The
-      # package's `postinstall` script runs `node ./build/cli.js
-      # install-command`, which fails with MODULE_NOT_FOUND because that file
-      # doesn't exist yet (verified: a plain `npm ci` on a fresh clone exits
-      # non-zero here). `npm test` runs `tsc` before the test suite, which
-      # produces `build/` itself, so skipping lifecycle scripts on install is
-      # safe and unblocks CI.
+      # postinstall is guarded for source checkouts (scripts/lifecycle.cjs,
+      # legate-s4b) so a plain `npm ci` works, but we still skip lifecycle
+      # scripts on CI: install-command writes skill cards to ~/.claude on the
+      # runner, which is pointless work there. `npm test` runs `tsc` first,
+      # producing `build/` itself.
       - run: npm ci --ignore-scripts
 
       - run: npm test
@@ -40,7 +38,7 @@ jobs:
           node-version: 20.x
           cache: npm
 
-      # See comment in the `test` job: postinstall requires build/ to exist.
+      # See comment in the `test` job: lifecycle scripts are skipped on CI.
       - run: npm ci --ignore-scripts
 
       # Build first so the dry-run reflects the real published contents of
@@ -61,7 +59,7 @@ jobs:
           node-version: 20.x
           cache: npm
 
-      # See comment in the `test` job: postinstall requires build/ to exist.
+      # See comment in the `test` job: lifecycle scripts are skipped on CI.
       - run: npm ci --ignore-scripts
 
       - run: npm run lint
