@@ -455,7 +455,7 @@ function runCliAsGlobal(homeDir: string, ...args: string[]):
   mkdirSync(fakeBuildDir, { recursive: true });
   // Copy all build artifacts so imports resolve
   const srcBuildDir = resolve(process.cwd(), 'build');
-  const buildFiles = ['cli.js', 'registry.js'];
+  const buildFiles = ['cli.js', 'registry.js', 'migration.js'];
   for (const f of buildFiles) {
     const srcPath = join(srcBuildDir, f);
     if (!existsSync(srcPath)) {

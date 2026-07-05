@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { migrateIfNeeded } from './migration.js';
 
 export interface ServerEntry {
   name: string;
@@ -18,11 +19,22 @@ export interface Registry {
 const REGISTRY_DIR = join(homedir(), '.config', 'legate');
 export const REGISTRY_PATH = join(REGISTRY_DIR, 'servers.json');
 
-// One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ on first run
-const OLD_REGISTRY_DIR = join(homedir(), '.config', 'prefect');
-if (!existsSync(REGISTRY_DIR) && existsSync(OLD_REGISTRY_DIR)) {
-  try { cpSync(OLD_REGISTRY_DIR, REGISTRY_DIR, { recursive: true }); } catch { /* non-fatal */ }
+/**
+ * One-time migration: copy ~/.config/prefect/ → ~/.config/legate/ when servers.json
+ * does not yet exist in the new location.
+ *
+ * Guard is on REGISTRY_PATH (the FILE), not the directory — the directory is created
+ * by `legate add-server` before the MCP ever runs, so a directory-existence guard would
+ * silently skip migration on any machine that used the CLI before the rename (legate-5di).
+ *
+ * @internal — exported for testing only. Mirrors sessions._runMigration.
+ */
+export function _runRegistryMigration(newPath: string, oldDir: string): void {
+  migrateIfNeeded(newPath, oldDir, dirname(newPath));
 }
+
+const OLD_REGISTRY_DIR = join(homedir(), '.config', 'prefect');
+_runRegistryMigration(REGISTRY_PATH, OLD_REGISTRY_DIR);
 
 export function readRegistry(registryPath: string = REGISTRY_PATH): Registry {
   try {

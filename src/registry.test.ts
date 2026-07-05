@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readRegistry, writeRegistry, addServer, removeServer } from './registry.js';
+import { readRegistry, writeRegistry, addServer, removeServer, _runRegistryMigration } from './registry.js';
 import { countSessionsForServer } from './sessions.js';
 
 function freshTmp(): string {
@@ -266,4 +266,55 @@ test('addServer allows updating a server to the same host:port (same name is not
     const reg = readRegistry(regPath);
     assert.equal(reg.servers[0].modelID, 'qwen3-turbo');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── Migration guard regression tests (legate-5di) ───────────────────────────
+// Mirrors the two sessions._runMigration tests. Regression for: the guard was
+// `!existsSync(dir)` but `legate add-server` creates ~/.config/legate/ before the
+// MCP runs, so a directory-existence check silently skipped servers.json migration.
+
+test('_runRegistryMigration copies old dir when target servers.json absent, even if target dir already exists', () => {
+  const root = freshTmp();
+  try {
+    // Simulate: CLI created ~/.config/legate/ but no servers.json yet
+    const newDir = join(root, 'legate');
+    const newPath = join(newDir, 'servers.json');
+    mkdirSync(newDir);
+
+    // Simulate: old ~/.config/prefect/ with a servers.json
+    const oldDir = join(root, 'prefect');
+    mkdirSync(oldDir);
+    writeFileSync(join(oldDir, 'servers.json'), JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }));
+
+    _runRegistryMigration(newPath, oldDir);
+
+    assert.ok(existsSync(newPath), 'servers.json should have been migrated');
+    const migrated = JSON.parse(readFileSync(newPath, 'utf8'));
+    assert.equal(migrated.servers[0].name, 'old', 'migrated registry should contain the old entry');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('_runRegistryMigration skips copy when target servers.json already exists (migration already done)', () => {
+  const root = freshTmp();
+  try {
+    const newDir = join(root, 'legate');
+    const newPath = join(newDir, 'servers.json');
+    mkdirSync(newDir);
+    // Target servers.json already present — migration must not overwrite
+    writeFileSync(newPath, JSON.stringify({ servers: [{ name: 'existing', host: 'h', port: 2, providerID: 'vllm', modelID: 'qwen3' }] }));
+
+    const oldDir = join(root, 'prefect');
+    mkdirSync(oldDir);
+    writeFileSync(join(oldDir, 'servers.json'), JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }));
+
+    _runRegistryMigration(newPath, oldDir);
+
+    const after = JSON.parse(readFileSync(newPath, 'utf8'));
+    assert.equal(after.servers[0].name, 'existing', 'existing entry should be preserved');
+    assert.ok(!after.servers.some((s: { name: string }) => s.name === 'old'), 'old entry should NOT have been merged in');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

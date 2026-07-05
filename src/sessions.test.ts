@@ -211,6 +211,120 @@ test('readSessionMap keeps legacy entries without createdAt (never expires them)
   }
 });
 
+test('readSessionMap is side-effect free: does NOT rewrite the file when it contains expired entries', () => {
+  const dir = freshTmp();
+  const orig = process.env.LEGATE_SESSION_TTL_MS;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    const old = Date.now() - 1000; // 1 second ago
+    writeSessionMap({
+      sessions: {
+        'ses_old': { server: 'local', url: 'http://localhost:4096', createdAt: old },
+        'ses_new': { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+    const before = readFileSync(regPath, 'utf8');
+
+    process.env.LEGATE_SESSION_TTL_MS = '500'; // ses_old (1s old) is expired
+    const map = readSessionMap(regPath);
+    // Returned view excludes the expired entry...
+    assert.ok(!('ses_old' in map.sessions), 'expired entry should be filtered from the returned map');
+    assert.ok('ses_new' in map.sessions, 'fresh entry should remain in the returned map');
+    // ...but the file on disk is UNCHANGED (no prune-and-write side effect).
+    const after = readFileSync(regPath, 'utf8');
+    assert.equal(after, before, 'readSessionMap must not rewrite sessions.json on read');
+    const rawOnDisk = JSON.parse(after);
+    assert.ok('ses_old' in rawOnDisk.sessions, 'expired entry should still be physically present on disk after a read');
+  } finally {
+    if (orig === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('atomicCheckAndAdd physically prunes expired entries under the lock (TTL prune)', async () => {
+  const dir = freshTmp();
+  const origFetch = globalThis.fetch;
+  const orig = process.env.LEGATE_SESSION_TTL_MS;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    const old = Date.now() - 1000;
+    writeSessionMap({
+      sessions: {
+        'ses_expired': { server: 'myserver', url: 'http://localhost:4096', createdAt: old },
+        'ses_fresh': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+
+    // All live — so the only removal is the TTL prune, not a liveness prune.
+    (globalThis as Record<string, unknown>).fetch = async () => new Response('{}', { status: 200 });
+    process.env.LEGATE_SESSION_TTL_MS = '500'; // ses_expired is over TTL
+
+    const result = await atomicCheckAndAdd(
+      'ses_new',
+      { server: 'myserver', url: 'http://localhost:4096' },
+      null,
+      regPath,
+    );
+    assert.equal(result, undefined, 'should succeed with unlimited capacity');
+
+    // Read the RAW file (not the filtered readSessionMap) to prove physical removal.
+    const rawOnDisk = JSON.parse(readFileSync(regPath, 'utf8'));
+    assert.ok(!('ses_expired' in rawOnDisk.sessions), 'expired entry should be physically pruned from disk');
+    assert.ok('ses_fresh' in rawOnDisk.sessions, 'fresh entry should remain');
+    assert.ok('ses_new' in rawOnDisk.sessions, 'new entry should be added');
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = origFetch;
+    if (orig === undefined) delete process.env.LEGATE_SESSION_TTL_MS;
+    else process.env.LEGATE_SESSION_TTL_MS = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('atomicCheckAndAdd threads the stored directory into the liveness probe (legate-ale)', async () => {
+  const dir = freshTmp();
+  const origFetch = globalThis.fetch;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    const projectDir = '/home/user/some project';
+    writeSessionMap({
+      sessions: {
+        // Entry WITH a stored directory — probe must scope to it.
+        'ses_scoped': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now(), directory: projectDir },
+        // Entry WITHOUT a directory — probe must omit the query param (legacy behavior).
+        'ses_default': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+      },
+    }, regPath);
+
+    const probedUrls: string[] = [];
+    (globalThis as Record<string, unknown>).fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+      probedUrls.push(url);
+      return new Response('{}', { status: 200 });
+    };
+
+    await atomicCheckAndAdd(
+      'ses_new',
+      { server: 'myserver', url: 'http://localhost:4096' },
+      null,
+      regPath,
+    );
+
+    const scopedProbe = probedUrls.find((u) => u.includes('ses_scoped'));
+    const defaultProbe = probedUrls.find((u) => u.includes('ses_default'));
+    assert.ok(scopedProbe, 'ses_scoped should have been probed');
+    assert.ok(
+      scopedProbe!.includes(`directory=${encodeURIComponent(projectDir)}`),
+      `scoped probe URL should carry the encoded directory query param, was: ${scopedProbe}`,
+    );
+    assert.ok(defaultProbe, 'ses_default should have been probed');
+    assert.ok(!defaultProbe!.includes('directory='), `default probe URL should NOT carry a directory param, was: ${defaultProbe}`);
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('atomicCheckAndAdd prunes stale sessions (non-200 liveness) before capacity check', async () => {
   const dir = freshTmp();
   const origFetch = globalThis.fetch;

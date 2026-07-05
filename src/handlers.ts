@@ -46,7 +46,9 @@ export async function createSession(
   // route to the correct server even after an MCP server restart. Both serverUrl
   // and serverName must be present — entry-point handlers always pass both.
   if (serverUrl && serverName) {
-    const entry = { server: serverName, url: serverUrl, ...(model ? { model } : {}) };
+    // legate-ale: persist the project directory so the liveness probe in atomicCheckAndAdd
+    // can scope GET /session/:id to the right project. Omitted when no directory was provided.
+    const entry = { server: serverName, url: serverUrl, ...(model ? { model } : {}), ...(directory ? { directory } : {}) };
     // WR-01: always use the atomic lock (even when maxSessions is null) so concurrent
     // instances cannot produce a lost write. atomicCheckAndAdd skips the capacity check
     // when maxSessions is null but still acquires the lock for the write.
