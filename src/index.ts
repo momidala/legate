@@ -1200,8 +1200,15 @@ server.registerTool(
       const serverUrl = resolveServerUrl(sessionId);
       // Poll until idle or timeout.
       // Stuck-busy escape: if status stays "busy" for STALE_BUSY_THRESHOLD consecutive polls,
-      // cross-check against message history. If the last message is from the assistant the
-      // agent has finished but OpenCode's status map has not caught up — break and treat as idle.
+      // cross-check against message history. If the last message is a COMPLETED assistant
+      // message the agent has finished but OpenCode's status map has not caught up — break
+      // and treat as idle.
+      // legate-tia: role === 'assistant' alone is NOT sufficient — OpenCode creates the
+      // assistant message row (role set, zero parts) the instant the prompt is accepted,
+      // so any task busy >10s would match and legate_await would return empty/partial
+      // results (reproduced live: message existed 90s before generation finished).
+      // info.time.completed is only set when the message is truly done (AssistantMessage
+      // type: time: { created: number; completed?: number }).
       const STALE_BUSY_THRESHOLD = 5;
       let staleBusyCount = 0;
       while (true) {
@@ -1215,9 +1222,9 @@ server.registerTool(
           if (staleBusyCount >= STALE_BUSY_THRESHOLD) {
             const msgResult = await getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined });
             if (!msgResult.error && Array.isArray(msgResult.data) && msgResult.data.length > 0) {
-              const lastMsg = msgResult.data[msgResult.data.length - 1] as { info: { role?: string } };
-              if ((lastMsg.info as { role?: string }).role === 'assistant') {
-                console.error(`[Legate] legate_await: breaking on stale busy — last message is assistant after ${staleBusyCount} busy polls (session ${sessionId})`);
+              const lastMsg = msgResult.data[msgResult.data.length - 1] as { info: { role?: string; time?: { completed?: number } } };
+              if (lastMsg.info.role === 'assistant' && lastMsg.info.time?.completed !== undefined) {
+                console.error(`[Legate] legate_await: breaking on stale busy — last message is a completed assistant message after ${staleBusyCount} busy polls (session ${sessionId})`);
                 break;
               }
             }
