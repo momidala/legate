@@ -22,12 +22,19 @@ import { resolve } from 'node:path';
 
 const INDEX_SRC = resolve(process.cwd(), 'src/index.ts');
 
+// legate-epe: after the registration refactor, tools register through one of three
+// call sites — the two shared wrappers registerSessionTool(...) / registerServerTool(...)
+// and direct server.registerTool(...) for the handful of tools with bespoke control
+// flow. All three take the tool-name string literal as their first argument, so the
+// name-extraction regex accepts any of the three. The wrapper *definitions* call
+// server.registerTool(name, ...) with the `name` identifier (not a string literal),
+// so they are naturally excluded — the regex requires a quoted literal after the paren.
+const TOOL_REGISTRATION = /(?:server\.registerTool|registerSessionTool|registerServerTool)\(\s*\n?\s*'([^']+)'/g;
+
 function loadToolNames(src: string): { legate: string[]; prefect: string[] } {
   const legate: string[] = [];
   const prefect: string[] = [];
-  // Match registerTool( followed on the next line (or same line) by the tool name string.
-  // The source uses: server.registerTool(\n  'legate_*',
-  const pattern = /server\.registerTool\(\s*\n?\s*'([^']+)'/g;
+  const pattern = new RegExp(TOOL_REGISTRATION.source, 'g');
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(src)) !== null) {
     const name = m[1];
@@ -54,13 +61,14 @@ test('RENAME-03: zero prefect_ tool names remain in src/index.ts registerTool ca
 test('RENAME-03: every registerTool call site uses the legate_ prefix (no unclassified tools)', () => {
   const src = readFileSync(INDEX_SRC, 'utf8');
   const { legate, prefect } = loadToolNames(src);
-  // Count raw registerTool call sites — catches any tool name that is neither legate_ nor prefect_
-  const totalCalls = (src.match(/server\.registerTool\(/g) ?? []).length;
+  // Count every named registration call site (across all three registration forms) —
+  // catches any tool name that is neither legate_ nor prefect_.
+  const totalCalls = (src.match(new RegExp(TOOL_REGISTRATION.source, 'g')) ?? []).length;
 
   assert.equal(
     legate.length + prefect.length,
     totalCalls,
-    `Expected every server.registerTool( call site's name to start with legate_ or prefect_, ` +
+    `Expected every registration call site's name to start with legate_ or prefect_, ` +
     `but found ${totalCalls} call sites and only classified ${legate.length + prefect.length} ` +
     `(${legate.length} legate_ + ${prefect.length} prefect_). Some tool name does not match either prefix.`,
   );

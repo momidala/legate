@@ -127,6 +127,139 @@ export { resolveDirectory };
 const packageVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 const server = new McpServer({ name: 'legate', version: packageVersion });
 
+// ---------------------------------------------------------------------------
+// legate-epe: shared tool-registration helpers.
+//
+// Before this refactor every one of the 40 registerTool handlers repeated the
+// same four boilerplate blocks: resolveDirectory + resolveServerUrl + getClient
+// at the top; a try/catch wrapping the return in a { content:[{type:'text'}] }
+// envelope and mapping errors to { ..., isError:true }; a 404 → lookupSession →
+// removeSession → throw-stale-session sequence; and the multi-line stale-session
+// error TEXT itself (~20 verbatim copies). These helpers give each of those
+// exactly ONE definition. Tool names, input schemas, success payload shapes, and
+// error message text are unchanged — only the duplication is gone.
+// ---------------------------------------------------------------------------
+
+type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+type OpencodeClient = ReturnType<typeof createOpencodeClient>;
+
+// legate-epe: response-envelope helpers — ONE definition of each content shape.
+function okJson(value: unknown): ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(value) }] };
+}
+function okText(text: string): ToolResult {
+  return { content: [{ type: 'text', text }] };
+}
+function errText(err: unknown): ToolResult {
+  return { content: [{ type: 'text', text: String(err) }], isError: true };
+}
+
+// legate-epe / D-12: the ONE definition of the stale-session error text. Every
+// tool that discovers a session 404 surfaces exactly this message. serverName is
+// the registry name (typically entry?.server ?? 'unknown'); url is the server URL
+// the failing call was routed to.
+function staleSessionMessage(sessionId: string, serverName: string, url: string): string {
+  return (
+    `Session ${sessionId} not found on server '${serverName}' (${url}).\n` +
+    `The session may have been deleted or the server restarted.\n` +
+    `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
+  );
+}
+
+// legate-epe / D-12: pre-throw 404 handler for SDK { data, error } results. On a
+// 404 it removes the now-stale session from sessions.json and throws the canonical
+// stale-session Error; any other API error is rethrown as a typed OpenCodeApiError.
+// Declared `never` so callers narrow `data` after `if (error) handleNotFound(...)`.
+// legate-dxw: typed 404 check (isNotFound) replaces the old JSON string-matching.
+function handleNotFound(error: unknown, sessionId: string, serverUrl: string): never {
+  if (isNotFound(error)) {
+    const entry = lookupSession(sessionId);
+    removeSession(sessionId);
+    throw new Error(staleSessionMessage(sessionId, entry?.server ?? 'unknown', serverUrl));
+  }
+  throw apiError(error);
+}
+
+// legate-epe / D-12: post-catch 404 handler for the composite tools (legate_run,
+// legate_get_diff, legate_await) whose helpers throw OpenCodeApiError from deep in
+// handlers.ts. Mirrors handleNotFound but returns an isError envelope instead of
+// throwing, recovering the stale URL from the (already-removed) session entry and
+// falling back to resolveServerUrl() exactly as the original inline copies did.
+function staleErrorResponse(sessionId: string): ToolResult {
+  const entry = lookupSession(sessionId);
+  removeSession(sessionId);
+  const staleUrl = entry?.url ?? resolveServerUrl();
+  return {
+    content: [{ type: 'text', text: staleSessionMessage(sessionId, entry?.server ?? 'unknown', staleUrl) }],
+    isError: true,
+  };
+}
+
+// legate-epe: registration wrapper for the simple session-scoped tools. Resolves
+// directory + server URL (from sessionId) + client, runs the handler, and JSON-
+// stringifies its return into the content envelope. The handler calls
+// handleNotFound(error, sessionId, serverUrl) on SDK errors; any thrown value
+// (the stale-session Error included) becomes a String(err) isError response —
+// byte-identical to the old per-handler catch blocks.
+function registerSessionTool<S extends z.ZodTypeAny>(
+  name: string,
+  config: { description: string; inputSchema: S },
+  handler: (ctx: {
+    client: OpencodeClient;
+    serverUrl: string;
+    dir: string | undefined;
+    args: z.infer<S> & { sessionId: string; directory?: string };
+  }) => Promise<unknown>,
+): void {
+  // legate-epe: the callback is cast because McpServer.registerTool's ToolCallback
+  // is a deferred conditional type over the (here-generic) schema S; TS cannot prove
+  // a concrete callback assignable to it inside a generic wrapper. Runtime shape is
+  // unchanged — the SDK still validates args against `config.inputSchema`.
+  const cb = async (rawArgs: unknown): Promise<ToolResult> => {
+    const args = rawArgs as z.infer<S> & { sessionId: string; directory?: string };
+    const dir = resolveDirectory(args.directory);
+    try {
+      const serverUrl = resolveServerUrl(args.sessionId);
+      const client = getClient(serverUrl);
+      const result = await handler({ client, serverUrl, dir, args });
+      return okJson(result);
+    } catch (err) {
+      return errText(err);
+    }
+  };
+  server.registerTool(name, config, cb as never);
+}
+
+// legate-epe: registration wrapper for the server-scoped tools (no sessionId).
+// Resolves directory + default/first server URL + client, runs the handler, and
+// JSON-stringifies the return. Server tools have no session to invalidate, so
+// there is no stale-session handling — API errors surface as String(err).
+function registerServerTool<S extends z.ZodTypeAny>(
+  name: string,
+  config: { description: string; inputSchema: S },
+  handler: (ctx: {
+    client: OpencodeClient;
+    serverUrl: string;
+    dir: string | undefined;
+    args: z.infer<S> & { directory?: string };
+  }) => Promise<unknown>,
+): void {
+  // legate-epe: callback cast — see registerSessionTool for the rationale.
+  const cb = async (rawArgs: unknown): Promise<ToolResult> => {
+    const args = rawArgs as z.infer<S> & { directory?: string };
+    const dir = resolveDirectory(args.directory);
+    try {
+      const serverUrl = resolveServerUrl();
+      const client = getClient(serverUrl);
+      const result = await handler({ client, serverUrl, dir, args });
+      return okJson(result);
+    } catch (err) {
+      return errText(err);
+    }
+  };
+  server.registerTool(name, config, cb as never);
+}
+
 // CORE-01: Create a new OpenCode session
 server.registerTool(
   'legate_create_session',
@@ -152,9 +285,9 @@ server.registerTool(
         ? { providerID: serverEntry.providerID, modelID: serverEntry.modelID }
         : undefined;
       const session = await createSession(getClient(serverUrl), title, dir, parentID, serverUrl, serverName, model, serverEntry?.maxSessions);
-      return { content: [{ type: 'text', text: JSON.stringify(session) }] };
+      return okJson(session);
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -170,7 +303,7 @@ server.registerTool(
       'Specify `server` to target a known server, or omit to fan out to all registered servers.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID returned from legate_create_session'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       server: z.string().min(1).optional().describe(
         'Server name (from registry) to target when the session is not in local sessions.json. ' +
         'If omitted and the session is unknown locally, all registered servers are tried.',
@@ -191,15 +324,11 @@ server.registerTool(
         if (error) {
           if (isNotFound(error)) {
             removeSession(sessionId);
-            throw new Error(
-              `Session ${sessionId} not found on server '${entry.server}' (${serverUrl}).\n` +
-              `The session may have been deleted or the server restarted.\n` +
-              `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-            );
+            throw new Error(staleSessionMessage(sessionId, entry.server, serverUrl));
           }
           throw apiError(error);
         }
-        return { content: [{ type: 'text', text: String(data) }] };
+        return okText(String(data));
       }
 
       // Zombie fallback: session not in sessions.json (context reset / crash scenario).
@@ -232,12 +361,7 @@ server.registerTool(
             if (isNotFound(error)) { misses.push(`${target.name} (${target.url}): not found`); continue; }
             throw apiError(error);
           }
-          return {
-            content: [{
-              type: 'text',
-              text: `Aborted zombie session ${sessionId} on server '${target.name}' (${target.url}). Result: ${String(data)}`,
-            }],
-          };
+          return okText(`Aborted zombie session ${sessionId} on server '${target.name}' (${target.url}). Result: ${String(data)}`);
         } catch (err) {
           misses.push(`${target.name} (${target.url}): ${String(err)}`);
         }
@@ -249,7 +373,7 @@ server.registerTool(
         `The session may have already been deleted. Verify with: curl -s http://<host>:<port>/session/status`,
       );
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -269,7 +393,7 @@ server.registerTool(
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
-      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       // RUN-01: model override — both providerID AND modelID required together
       model: z
         .object({
@@ -340,34 +464,17 @@ server.registerTool(
           await new Promise<void>((r) => setTimeout(r, 250));
         }
       } catch { /* best-effort — never block the return on status lag */ }
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      return okJson(result);
     } catch (err) {
       clearTimeout(timer);
       if ((err as Error).name === 'AbortError') {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `legate_run timed out after ${TIMEOUT_MS / 1000}s — check LEGATE_SERVER_URL and model endpoint`,
-            },
-          ],
-          isError: true,
-        };
+        return errText(`legate_run timed out after ${TIMEOUT_MS / 1000}s — check LEGATE_SERVER_URL and model endpoint`);
       }
       // D-12 stale-session detection — runPrompt throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
       if (err instanceof OpenCodeApiError && err.isNotFound()) {
-        const entry = lookupSession(sessionId);
-        removeSession(sessionId);
-        const staleUrl = entry?.url ?? resolveServerUrl();
-        return {
-          content: [{ type: 'text', text:
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
-          }], isError: true,
-        };
+        return staleErrorResponse(sessionId);
       }
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -376,7 +483,7 @@ server.registerTool(
 // Same body shape as legate_run (model/agent/system supported) but no timeout
 // because the API returns immediately. Use legate_session_status to poll for
 // completion.
-server.registerTool(
+registerSessionTool(
   'legate_prompt_async',
   {
     description:
@@ -384,7 +491,7 @@ server.registerTool(
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
       prompt: z.string().describe('The coding task or instruction to send'),
-      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       model: z
         .object({
           providerID: z.string(),
@@ -430,47 +537,27 @@ server.registerTool(
       { message: 'Provide either agent or agentInput, not both — they are mutually exclusive overrides' }
     ),
   },
-  async ({ sessionId, prompt, directory, model, agent, system, tools, files, messageID, agentInput, subtaskInput }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { error } = await getClient(serverUrl).session.promptAsync({
-        path: { id: sessionId },
-        body: {
-          parts: [
-            { type: 'text', text: prompt },
-            ...(files ?? []),
-            ...(agentInput ? [agentInput] : []),
-            ...(subtaskInput ? [subtaskInput] : []),
-          ],
-          ...(model ? { model } : {}),
-          ...(agent ? { agent } : {}),
-          ...(system ? { system } : {}),
-          ...(tools ? { tools } : {}),
-          ...(messageID ? { messageID } : {}),
-        },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return {
-        content: [
-          { type: 'text', text: JSON.stringify({ sessionId, accepted: true }) },
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, prompt, model, agent, system, tools, files, messageID, agentInput, subtaskInput } = args;
+    const { error } = await client.session.promptAsync({
+      path: { id: sessionId },
+      body: {
+        parts: [
+          { type: 'text', text: prompt },
+          ...(files ?? []),
+          ...(agentInput ? [agentInput] : []),
+          ...(subtaskInput ? [subtaskInput] : []),
         ],
-      };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+        ...(model ? { model } : {}),
+        ...(agent ? { agent } : {}),
+        ...(system ? { system } : {}),
+        ...(tools ? { tools } : {}),
+        ...(messageID ? { messageID } : {}),
+      },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return { sessionId, accepted: true };
   }
 );
 
@@ -482,7 +569,7 @@ server.registerTool(
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID'),
       messageID: z.string().optional().describe('Optional message ID to scope the diff to a single message'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, messageID, directory }) => {
@@ -490,22 +577,13 @@ server.registerTool(
     try {
       const serverUrl = resolveServerUrl(sessionId);
       const diffs = await getDiff(getClient(serverUrl), sessionId, messageID, dir);
-      return { content: [{ type: 'text', text: JSON.stringify(diffs) }] };
+      return okJson(diffs);
     } catch (err) {
       // D-12 stale-session detection — getDiff throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
       if (err instanceof OpenCodeApiError && err.isNotFound()) {
-        const entry = lookupSession(sessionId);
-        removeSession(sessionId);
-        const staleUrl = entry?.url ?? resolveServerUrl();
-        return {
-          content: [{ type: 'text', text:
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
-          }], isError: true,
-        };
+        return staleErrorResponse(sessionId);
       }
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -513,7 +591,7 @@ server.registerTool(
 // CORE-04: Respond to an OpenCode permission request
 // NOTE: REQUIREMENTS.md says allow/deny/allow_always — that's WRONG.
 // The OpenCode API enum is "once" | "always" | "reject" (verified from @opencode-ai/sdk types).
-server.registerTool(
+registerSessionTool(
   'legate_approve_permission',
   {
     description: 'Respond to an OpenCode permission request. once = approve this request only; always = approve similar future requests; reject = deny.',
@@ -523,35 +601,19 @@ server.registerTool(
       response: z.enum(['once', 'always', 'reject']).describe(
         'once = approve this request only; always = approve similar future requests; reject = deny'
       ),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, permissionId, response, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      // CRITICAL: permissions method is on TOP-LEVEL client, NOT client.session
-      const { data, error } = await getClient(serverUrl).postSessionIdPermissionsPermissionId({
-        path: { id: sessionId, permissionID: permissionId },
-        body: { response },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, permissionId, response } = args;
+    // CRITICAL: permissions method is on TOP-LEVEL client, NOT client.session
+    const { data, error } = await client.postSessionIdPermissionsPermissionId({
+      path: { id: sessionId, permissionID: permissionId },
+      body: { response },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
@@ -563,7 +625,7 @@ server.registerTool(
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to fork from'),
       messageID: z.string().optional().describe('Optional message ID to fork at; if omitted, forks at the current tip'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ sessionId, messageID, directory }) => {
@@ -579,13 +641,13 @@ server.registerTool(
         query: dir ? { directory: dir } : undefined,
       });
       if (error) {
+        // legate-epe: fork uses sourceEntry (captured pre-await) instead of a fresh
+        // lookupSession, so it cannot use handleNotFound — but reuses staleSessionMessage
+        // for the ONE canonical text. The pre-capture avoids the race where another
+        // process removes the session from sessions.json during the API call.
         if (isNotFound(error)) {
           removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${sourceEntry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
+          throw new Error(staleSessionMessage(sessionId, sourceEntry?.server ?? 'unknown', serverUrl));
         }
         throw apiError(error);
       }
@@ -594,15 +656,15 @@ server.registerTool(
       if (data && sourceEntry) {
         addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId, createdAt: Date.now() });
       }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+      return okJson(data);
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
 
 // CORE-06: Revert a session to a prior message
-server.registerTool(
+registerSessionTool(
   'legate_revert',
   {
     description: 'Revert an OpenCode session to a prior message. messageID is required. Optionally scope to a specific part of that message via partID.',
@@ -610,39 +672,23 @@ server.registerTool(
       sessionId: z.string().min(1).describe('Session ID'),
       messageID: z.string().describe('Required: message ID to revert to'),
       partID: z.string().optional().describe('Optional: specific part within the message'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, messageID, partID, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.revert({
-        path: { id: sessionId },
-        body: { messageID, ...(partID ? { partID } : {}) },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, messageID, partID } = args;
+    const { data, error } = await client.session.revert({
+      path: { id: sessionId },
+      body: { messageID, ...(partID ? { partID } : {}) },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-01: List all OpenCode sessions
-server.registerTool(
+registerServerTool(
   'legate_session_list',
   {
     description: 'List all OpenCode sessions. Returns an array of Session objects each with id, title, directory, time.created, time.updated, and optional summary/share/revert fields. Pass directory to filter sessions by project root.',
@@ -650,23 +696,17 @@ server.registerTool(
       directory: z.string().optional().describe('Filter sessions by project directory path'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).session.list({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.session.list({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // SESSION-02: Fetch a single OpenCode session by ID
-server.registerTool(
+registerSessionTool(
   'legate_session_get',
   {
     description: 'Fetch a single OpenCode session by ID. Returns the full Session object including id, title, directory, parentID (if forked), and revert state.',
@@ -675,30 +715,14 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.get({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.get({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
@@ -726,17 +750,17 @@ server.registerTool(
       if (sessionId) {
         // Return just the requested session; treat missing-from-map as idle (consistent with legate_await)
         const entry = (data as Record<string, unknown>)[sessionId] ?? { type: 'idle' };
-        return { content: [{ type: 'text', text: JSON.stringify({ [sessionId]: entry }) }] };
+        return okJson({ [sessionId]: entry });
       }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+      return okJson(data);
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
 
 // SESSION-04: Retrieve message history for a session (limit = most-recent-N, no cursor)
-server.registerTool(
+registerSessionTool(
   'legate_session_messages',
   {
     description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages.',
@@ -748,35 +772,19 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, limit, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.messages({
-        path: { id: sessionId },
-        query: { ...(limit !== undefined ? { limit } : {}), ...(dir ? { directory: dir } : {}) },
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, limit } = args;
+    const { data, error } = await client.session.messages({
+      path: { id: sessionId },
+      query: { ...(limit !== undefined ? { limit } : {}), ...(dir ? { directory: dir } : {}) },
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-05: Fetch a single message by ID within a session
-server.registerTool(
+registerSessionTool(
   'legate_session_message',
   {
     description: 'Fetch a single message by ID within an OpenCode session. Returns the message info and all its parts (TextPart, ToolPart, PatchPart, etc.).',
@@ -786,35 +794,19 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, messageId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.message({
-        path: { id: sessionId, messageID: messageId },  // SDK path param is messageID (capital D)
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, messageId } = args;
+    const { data, error } = await client.session.message({
+      path: { id: sessionId, messageID: messageId },  // SDK path param is messageID (capital D)
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-06: Delete a session permanently (irreversible)
-server.registerTool(
+registerSessionTool(
   'legate_session_delete',
   {
     description: 'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using legate_session_rename to archive instead of deleting.',
@@ -823,36 +815,20 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.delete({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      removeSession(sessionId);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.delete({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    removeSession(sessionId);
+    return data;
   }
 );
 
 // SESSION-07: Rename a session — MCP tool is "rename" but SDK method is client.session.update()
-server.registerTool(
+registerSessionTool(
   'legate_session_rename',
   {
     description: 'Rename an OpenCode session. Returns the full updated Session object.',
@@ -862,36 +838,20 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, title, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.update({  // NOT client.session.rename — does not exist
-        path: { id: sessionId },
-        body: { title },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, title } = args;
+    const { data, error } = await client.session.update({  // NOT client.session.rename — does not exist
+      path: { id: sessionId },
+      body: { title },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-08: List child sessions forked from a parent session
-server.registerTool(
+registerSessionTool(
   'legate_session_children',
   {
     description: 'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use legate_fork to create child sessions.',
@@ -900,45 +860,28 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.children({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      // OpenCode only tracks sessions created with parentID (native children).
-      // Fork-created sessions are tracked locally in sessions.json with parentId set.
-      // Merge both sources, deduplicating by session id.
-      const serverChildren: Array<{ id: string }> = (data as Array<{ id: string }>) ?? [];
-      const serverChildIds = new Set(serverChildren.map((s) => s.id));
-      const localMap = readSessionMap();
-      const localChildren = Object.entries(localMap.sessions)
-        .filter(([id, e]) => e.parentId === sessionId && !serverChildIds.has(id))
-        .map(([id, e]) => ({ id, server: e.server, url: e.url }));
-      const merged = [...serverChildren, ...localChildren];
-      return { content: [{ type: 'text', text: JSON.stringify(merged) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.children({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    // OpenCode only tracks sessions created with parentID (native children).
+    // Fork-created sessions are tracked locally in sessions.json with parentId set.
+    // Merge both sources, deduplicating by session id.
+    const serverChildren: Array<{ id: string }> = (data as Array<{ id: string }>) ?? [];
+    const serverChildIds = new Set(serverChildren.map((s) => s.id));
+    const localMap = readSessionMap();
+    const localChildren = Object.entries(localMap.sessions)
+      .filter(([id, e]) => e.parentId === sessionId && !serverChildIds.has(id))
+      .map(([id, e]) => ({ id, server: e.server, url: e.url }));
+    return [...serverChildren, ...localChildren];
   }
 );
 
 // SESSION-09: Undo a prior revert — NO body (SessionUnrevertData.body is typed never)
-server.registerTool(
+registerSessionTool(
   'legate_session_unrevert',
   {
     description: 'Restore all messages removed by a prior legate_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
@@ -947,31 +890,15 @@ server.registerTool(
       directory: z.string().optional().describe('Optional directory filter'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.unrevert({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-        // NO body — SessionUnrevertData.body is typed `never`
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.unrevert({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+      // NO body — SessionUnrevertData.body is typed `never`
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
@@ -981,7 +908,7 @@ server.registerTool(
 // string (e.g. "anthropic/claude-3-5-sonnet"), NOT a { providerID, modelID }
 // object — this is deliberate; the OpenCode command endpoint accepts a single
 // model string, unlike the prompt endpoint.
-server.registerTool(
+registerSessionTool(
   'legate_session_command',
   {
     description:
@@ -996,46 +923,30 @@ server.registerTool(
         .string()
         .optional()
         .describe('Optional model override as a plain string (NOT { providerID, modelID } — this endpoint takes a single string).'),
-      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
     }),
   },
-  async ({ sessionId, command, arguments: args, messageID, agent, model, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.command({
-        path: { id: sessionId },
-        body: {
-          command,
-          arguments: args,
-          ...(messageID ? { messageID } : {}),
-          ...(agent ? { agent } : {}),
-          ...(model ? { model } : {}),
-        },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      if (!data) throw new Error('Session command returned no data');
-      const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
-      if (!cmdParseResult.success) {
-        console.error('PartSchema validation warning (legate_session_command):', cmdParseResult.error.message);
-      }
-      const cmdParts = cmdParseResult.success ? cmdParseResult.data : (data as { parts?: unknown }).parts;
-      return { content: [{ type: 'text', text: JSON.stringify({ info: (data as { info?: unknown }).info, parts: cmdParts }) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, command, arguments: cmdArgs, messageID, agent, model } = args;
+    const { data, error } = await client.session.command({
+      path: { id: sessionId },
+      body: {
+        command,
+        arguments: cmdArgs,
+        ...(messageID ? { messageID } : {}),
+        ...(agent ? { agent } : {}),
+        ...(model ? { model } : {}),
+      },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    if (!data) throw new Error('Session command returned no data');
+    const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
+    if (!cmdParseResult.success) {
+      console.error('PartSchema validation warning (legate_session_command):', cmdParseResult.error.message);
     }
+    const cmdParts = cmdParseResult.success ? cmdParseResult.data : (data as { parts?: unknown }).parts;
+    return { info: (data as { info?: unknown }).info, parts: cmdParts };
   }
 );
 
@@ -1059,7 +970,7 @@ server.registerTool(
       ),
       prompt: z.string().describe('The coding task or instruction to execute'),
       title: z.string().optional().describe('Optional display title for the created session'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       model: z
         .object({ providerID: z.string(), modelID: z.string() })
         .optional()
@@ -1080,10 +991,7 @@ server.registerTool(
       const sessionEntry = lookupSession(providedSessionId);
       if (!sessionEntry) {
         clearTimeout(timer);
-        return {
-          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.` }],
-          isError: true,
-        };
+        return errText(`Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`);
       }
       try {
         const serverUrl = sessionEntry.url;
@@ -1091,17 +999,14 @@ server.registerTool(
         const result = await runPrompt(c, providedSessionId, prompt, { model, agent, system }, undefined, controller.signal);
         clearTimeout(timer);
         const diff = await getDiff(c, providedSessionId, undefined, undefined);
-        return { content: [{ type: 'text', text: JSON.stringify({ sessionId: providedSessionId, result, diff }) }] };
+        return okJson({ sessionId: providedSessionId, result, diff });
       } catch (err) {
         clearTimeout(timer);
         if ((err as Error).name === 'AbortError') {
           try { await getClient(sessionEntry.url).session.abort({ path: { id: providedSessionId } }); } catch { /* swallow */ }
-          return {
-            content: [{ type: 'text', text: `legate_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted` }],
-            isError: true,
-          };
+          return errText(`legate_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted`);
         }
-        return { content: [{ type: 'text', text: String(err) }], isError: true };
+        return errText(err);
       }
     }
 
@@ -1122,7 +1027,7 @@ server.registerTool(
       const result = await runPrompt(c, sessionId, prompt, { model, agent, system }, dir, controller.signal);
       clearTimeout(timer);
       const diff = await getDiff(c, sessionId, undefined, dir);
-      return { content: [{ type: 'text', text: JSON.stringify({ sessionId, result, diff }) }] };
+      return okJson({ sessionId, result, diff });
     } catch (err) {
       clearTimeout(timer);
       if ((err as Error).name === 'AbortError') {
@@ -1130,12 +1035,9 @@ server.registerTool(
         if (sessionId) {
           try { await getClient(resolveServerUrl(sessionId)).session.abort({ path: { id: sessionId } }); } catch { /* swallow */ }
         }
-        return {
-          content: [{ type: 'text', text: `legate_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}` }],
-          isError: true,
-        };
+        return errText(`legate_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}`);
       }
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -1158,7 +1060,7 @@ server.registerTool(
       ),
       prompt: z.string().describe('The coding task or instruction to execute'),
       title: z.string().optional().describe('Optional display title for the created session'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       model: z
         .object({ providerID: z.string(), modelID: z.string() })
         .optional()
@@ -1175,10 +1077,7 @@ server.registerTool(
       // D-09: reuse path — skip createSession; server/directory/title ignored
       const sessionEntry = lookupSession(providedSessionId);
       if (!sessionEntry) {
-        return {
-          content: [{ type: 'text', text: `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.` }],
-          isError: true,
-        };
+        return errText(`Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`);
       }
       try {
         const serverUrl = sessionEntry.url;
@@ -1192,21 +1091,12 @@ server.registerTool(
           },
           // directory ignored in reuse mode per D-09
         });
-        if (error) {
-          if (isNotFound(error)) {
-            const entry = lookupSession(providedSessionId);
-            removeSession(providedSessionId);
-            throw new Error(
-              `Session ${providedSessionId} not found on server '${entry?.server ?? 'unknown'}' (${entry?.url ?? serverUrl}).\n` +
-              `The session may have been deleted or the server restarted.\n` +
-              `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
-            );
-          }
-          throw apiError(error);
-        }
-        return { content: [{ type: 'text', text: JSON.stringify({ sessionId: providedSessionId }) }] };
+        // serverUrl === sessionEntry.url === (re-looked-up) entry?.url, so handleNotFound's
+        // serverUrl arg reproduces the original `entry?.url ?? serverUrl` text byte-for-byte.
+        if (error) handleNotFound(error, providedSessionId, serverUrl);
+        return okJson({ sessionId: providedSessionId });
       } catch (err) {
-        return { content: [{ type: 'text', text: String(err) }], isError: true };
+        return errText(err);
       }
     }
 
@@ -1233,9 +1123,9 @@ server.registerTool(
         query: dir ? { directory: dir } : undefined,
       });
       if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify({ sessionId: session.id }) }] };
+      return okJson({ sessionId: session.id });
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -1251,7 +1141,7 @@ server.registerTool(
       'Return a compact snapshot { status, todos, changedFiles } for a session. Faster than fetching full message history. changedFiles contains { file, additions, deletions } — use legate_get_diff for full patch content.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID to inspect'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
     }),
   },
   async ({ sessionId, directory }) => {
@@ -1266,15 +1156,7 @@ server.registerTool(
       ]);
       // Stale-session detection: if either todo or diff (the sessionId-bearing calls) returns 404, treat as stale
       for (const r of [todoResult, diffResult]) {
-        if (r.error && isNotFound(r.error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
+        if (r.error && isNotFound(r.error)) handleNotFound(r.error, sessionId, serverUrl);
       }
       if (statusResult.error) throw apiError(statusResult.error);
       if (todoResult.error) throw apiError(todoResult.error);
@@ -1286,9 +1168,9 @@ server.registerTool(
         additions: d.additions,
         deletions: d.deletions,
       }));
-      return { content: [{ type: 'text', text: JSON.stringify({ status, todos, changedFiles }) }] };
+      return okJson({ status, todos, changedFiles });
     } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
@@ -1308,7 +1190,7 @@ server.registerTool(
       sessionId: z.string().min(1).describe('Session ID from legate_dispatch'),
       pollIntervalMs: z.number().int().positive().optional().describe('Milliseconds between status polls. Default: 2000.'),
       timeoutMs: z.number().int().positive().optional().describe('Maximum milliseconds to wait. Default: LEGATE_TIMEOUT_MS env var (default 120000).'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
     }),
   },
   async ({ sessionId, pollIntervalMs = 2000, timeoutMs = TIMEOUT_MS, directory }) => {
@@ -1357,18 +1239,7 @@ server.registerTool(
         getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
         getDiff(getClient(serverUrl), sessionId, undefined, dir),
       ]);
-      if (messagesResult.error) {
-        if (isNotFound(messagesResult.error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(messagesResult.error);
-      }
+      if (messagesResult.error) handleNotFound(messagesResult.error, sessionId, serverUrl);
       // D-12: find last assistant message — same shape as legate_run result
       const msgs = messagesResult.data ?? [];
       const last = [...msgs].reverse().find((m) => (m.info as { role?: string }).role === 'assistant');
@@ -1379,123 +1250,93 @@ server.registerTool(
       }
       const validatedParts = awaitParseResult.success ? awaitParseResult.data : (last.parts as unknown[]);
       // D-13: return shape matches legate_delegate for easy substitution
-      return { content: [{ type: 'text', text: JSON.stringify({ result: { info: last.info, parts: validatedParts }, diff }) }] };
+      return okJson({ result: { info: last.info, parts: validatedParts }, diff });
     } catch (err) {
       // D-12 stale-session detection — getDiff/status throw OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
       if (err instanceof OpenCodeApiError && err.isNotFound()) {
-        const entry = lookupSession(sessionId);
-        removeSession(sessionId);
-        const staleUrl = entry?.url ?? resolveServerUrl();
-        return {
-          content: [{ type: 'text', text:
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${staleUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
-          }], isError: true,
-        };
+        return staleErrorResponse(sessionId);
       }
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
 
 // API-01: List OpenCode agents (Phase 8)
-server.registerTool(
+registerServerTool(
   'legate_list_agents',
   {
     description: 'List the agents available in the connected OpenCode instance. Returns Array<{ name, description?, mode }>. Use the returned name (e.g. "build", "general") as the agent param when calling legate_run. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).app.agents({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      const mapped = (data ?? []).map((a) => ({
-        name: a.name,
-        description: a.description,
-        mode: a.mode,
-      }));
-      return { content: [{ type: 'text', text: JSON.stringify(mapped) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.app.agents({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return (data ?? []).map((a) => ({
+      name: a.name,
+      description: a.description,
+      mode: a.mode,
+    }));
   }
 );
 
 // API-02: List OpenCode providers and their models (Phase 8)
-server.registerTool(
+registerServerTool(
   'legate_list_providers',
   {
     description: 'List the providers configured in the connected OpenCode instance and their available models. Returns Array<{ id, name, models: Array<{ id, name }> }>. Use returned provider.id + model.id as providerID/modelID params for legate_run. Pass directory to scope to a specific project root.',
     inputSchema: z.object({
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).provider.list({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      const mapped = (data?.all ?? []).map((p) => ({
-        id: p.id,
-        name: p.name,
-        models: Object.values(p.models).map((m) => ({ id: m.id, name: m.name })),
-      }));
-      return { content: [{ type: 'text', text: JSON.stringify(mapped) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.provider.list({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return (data?.all ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      models: Object.values(p.models).map((m) => ({ id: m.id, name: m.name })),
+    }));
   }
 );
 
 // API-03: Find workspace symbols by query (Phase 8)
-server.registerTool(
+registerServerTool(
   'legate_find_symbol',
   {
-    description: 'Search the OpenCode workspace for symbols matching a query string (e.g. function or class names). Returns Array<{ name, kind, path, range }> where path is project-root-relative when a directory is resolved (via directory param or OPENCODE_DEFAULT_PROJECT), absolute otherwise. kind is the LSP SymbolKind number.',
+    description: 'Search the OpenCode workspace for symbols matching a query string (e.g. function or class names). Returns Array<{ name, kind, path, range }> where path is project-root-relative when a directory is resolved (via directory param or LEGATE_DEFAULT_PROJECT), absolute otherwise. kind is the LSP SymbolKind number.',
     inputSchema: z.object({
       query: z.string().describe('Symbol name or pattern to search for'),
-      directory: z.string().optional().describe('Absolute path to the project root. Falls back to OPENCODE_DEFAULT_PROJECT env var if not provided.'),
+      directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async (args) => {
-    const { query: symbolQuery, directory } = args;
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).find.symbols({
-        query: { query: symbolQuery, ...(dir ? { directory: dir } : {}) },
-      });
-      if (error) throw apiError(error);
-      const mapped = (data ?? []).map((sym) => {
-        if (!sym.location.uri.startsWith('file://')) return null;
-        const absolutePath = decodeURIComponent(sym.location.uri.replace(/^file:\/\//, ''));
-        const filePath = dir ? path.relative(dir, absolutePath) : absolutePath;
-        return {
-          name: sym.name,
-          kind: sym.kind,
-          path: filePath,
-          range: sym.location.range,
-        };
-      }).filter((sym): sym is NonNullable<typeof sym> => sym !== null);
-      return { content: [{ type: 'text', text: JSON.stringify(mapped) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir, args }) => {
+    const { query: symbolQuery } = args;
+    const { data, error } = await client.find.symbols({
+      query: { query: symbolQuery, ...(dir ? { directory: dir } : {}) },
+    });
+    if (error) throw apiError(error);
+    return (data ?? []).map((sym) => {
+      if (!sym.location.uri.startsWith('file://')) return null;
+      const absolutePath = decodeURIComponent(sym.location.uri.replace(/^file:\/\//, ''));
+      const filePath = dir ? path.relative(dir, absolutePath) : absolutePath;
+      return {
+        name: sym.name,
+        kind: sym.kind,
+        path: filePath,
+        range: sym.location.range,
+      };
+    }).filter((sym): sym is NonNullable<typeof sym> => sym !== null);
   }
 );
 
 // SESSION-11: Trigger session summary generation
-server.registerTool(
+registerSessionTool(
   'legate_session_summarize',
   {
     description: 'Trigger summary generation for an OpenCode session. Returns true when the summarization was accepted. providerID and modelID are required — the endpoint has no default fallback. providerID must match a provider configured in the OpenCode server (e.g. "vllm" or "anthropic"); using an unconfigured provider returns ProviderModelNotFoundError.',
@@ -1506,36 +1347,20 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, providerID, modelID, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.summarize({
-        path: { id: sessionId },
-        body: { providerID, modelID },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, providerID, modelID } = args;
+    const { data, error } = await client.session.summarize({
+      path: { id: sessionId },
+      body: { providerID, modelID },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-12: Get the current todo list for a session
-server.registerTool(
+registerSessionTool(
   'legate_session_todo',
   {
     description: 'Get the current todo list for an OpenCode session. Returns Array<{ id, content, status, priority }> where status is one of pending/in_progress/completed/cancelled and priority is high/medium/low.',
@@ -1544,30 +1369,14 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.todo({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.todo({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
@@ -1610,7 +1419,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       if (!force && agentsPath && existsSync(agentsPath)) {
         clearTimeout(timer);
         const content = readFileSync(agentsPath, 'utf8');
-        return { content: [{ type: 'text', text: JSON.stringify({ existed: true, content }) }] };
+        return okJson({ existed: true, content });
       }
 
       const existed = agentsPath ? existsSync(agentsPath) : false;
@@ -1622,39 +1431,24 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify({ existed, accepted: data }) }] };
+      if (error) handleNotFound(error, sessionId, serverUrl);
+      return okJson({ existed, accepted: data });
     } catch (err) {
       clearTimeout(timer);
       if ((err as Error).name === 'AbortError') {
-        return {
-          content: [{
-            type: 'text',
-            text: `legate_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
-              `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
-              `Check whether AGENTS.md was created in the project directory anyway.`,
-          }],
-          isError: true,
-        };
+        return errText(
+          `legate_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
+          `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
+          `Check whether AGENTS.md was created in the project directory anyway.`,
+        );
       }
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      return errText(err);
     }
   }
 );
 
 // SESSION-15: Make a session publicly shareable
-server.registerTool(
+registerSessionTool(
   'legate_session_share',
   {
     description: 'Make an OpenCode session publicly shareable. Returns the full Session object — after sharing, the share URL is available at session.share.url in the returned Session.',
@@ -1663,35 +1457,19 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.share({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.share({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // SESSION-16: Remove sharing from a session
-server.registerTool(
+registerSessionTool(
   'legate_session_unshare',
   {
     description: 'Remove public sharing from an OpenCode session. Returns the updated Session object with the share field cleared (session.share will be absent/undefined).',
@@ -1700,35 +1478,19 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.unshare({
-        path: { id: sessionId },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId } = args;
+    const { data, error } = await client.session.unshare({
+      path: { id: sessionId },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // API-04: legate_vcs_info — get VCS/git info for the workspace
-server.registerTool(
+registerServerTool(
   'legate_vcs_info',
   {
     description: 'Get VCS/git info for the OpenCode workspace. Returns { branch: string } with the current git branch name. Pass directory to scope to a specific project root.',
@@ -1736,23 +1498,17 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).vcs.get({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.vcs.get({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-05: legate_file_status — get git-tracked file status for the workspace
-server.registerTool(
+registerServerTool(
   'legate_file_status',
   {
     description: 'Get git-tracked file status for the OpenCode workspace. Returns Array<{ path: string, added: number, removed: number, status: "added"|"deleted"|"modified" }>. Pass directory to scope to a specific project root.',
@@ -1760,23 +1516,17 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).file.status({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.file.status({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-06: legate_list_mcp_servers — list MCP servers configured in OpenCode
-server.registerTool(
+registerServerTool(
   'legate_list_mcp_servers',
   {
     description: 'List the MCP servers configured in the connected OpenCode instance. Returns { [serverName: string]: McpStatus } where McpStatus has a status field of "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration". Pass directory to scope to a specific project root.',
@@ -1784,23 +1534,17 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).mcp.status({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.mcp.status({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-11: legate_get_config — get the current OpenCode configuration
-server.registerTool(
+registerServerTool(
   'legate_get_config',
   {
     description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. Pass directory to scope to a specific project root. WARNING: response may include sensitive values (API keys, tokens) from the OpenCode config. Do not log or display raw output in shared environments.',
@@ -1808,24 +1552,18 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
+  async ({ client, dir }) => {
     // NOTE: Response may contain API keys or provider credentials — do not log or cache.
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).config.get({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+    const { data, error } = await client.config.get({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-12: legate_list_commands — list available slash commands
-server.registerTool(
+registerServerTool(
   'legate_list_commands',
   {
     description: 'List available slash commands in the OpenCode instance. Returns Array<{ name: string, description?: string, agent?: string, model?: string, template: string, subtask?: boolean }>. Complements legate_session_command which executes a named command. Pass directory to scope to a specific project root.',
@@ -1833,23 +1571,17 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).command.list({
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir }) => {
+    const { data, error } = await client.command.list({
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // SESSION-14: legate_session_shell — execute a shell command in a session context
-server.registerTool(
+registerSessionTool(
   'legate_session_shell',
   {
     description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Legate layer. sessionId, agent, and command are all required. model override is optional.',
@@ -1864,40 +1596,24 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ sessionId, command, agent, model, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl(sessionId);
-      const { data, error } = await getClient(serverUrl).session.shell({
-        path: { id: sessionId },
-        body: {
-          agent,
-          command,
-          ...(model ? { model } : {}),
-        },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) {
-        if (isNotFound(error)) {
-          const entry = lookupSession(sessionId);
-          removeSession(sessionId);
-          throw new Error(
-            `Session ${sessionId} not found on server '${entry?.server ?? 'unknown'}' (${serverUrl}).\n` +
-            `The session may have been deleted or the server restarted.\n` +
-            `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
-          );
-        }
-        throw apiError(error);
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, serverUrl, dir, args }) => {
+    const { sessionId, command, agent, model } = args;
+    const { data, error } = await client.session.shell({
+      path: { id: sessionId },
+      body: {
+        agent,
+        command,
+        ...(model ? { model } : {}),
+      },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) handleNotFound(error, sessionId, serverUrl);
+    return data;
   }
 );
 
 // API-07: legate_inject_mcp_server — add an MCP server to OpenCode at runtime
-server.registerTool(
+registerServerTool(
   'legate_inject_mcp_server',
   {
     description: 'WARNING: with configType "local" this registers an arbitrary command that the OpenCode host will execute as a subprocess — only inject MCP servers you trust. Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
@@ -1913,45 +1629,40 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ name, configType, commandArgs, environment, url, headers, enabled, timeout, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      if (configType === 'local' && (!commandArgs || commandArgs.length === 0)) {
-        throw new Error('legate_inject_mcp_server: commandArgs is required when configType is "local"');
-      }
-      if (configType === 'remote' && !url) {
-        throw new Error('legate_inject_mcp_server: url is required when configType is "remote"');
-      }
-      const config: import('@opencode-ai/sdk').McpLocalConfig | import('@opencode-ai/sdk').McpRemoteConfig =
-        configType === 'local'
-          ? {
-              type: 'local',
-              command: commandArgs!,
-              ...(environment ? { environment } : {}),
-              ...(enabled !== undefined ? { enabled } : {}),
-              ...(timeout !== undefined ? { timeout } : {}),
-            }
-          : {
-              type: 'remote',
-              url: url!,
-              ...(headers ? { headers } : {}),
-              ...(enabled !== undefined ? { enabled } : {}),
-            };
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).mcp.add({
-        body: { name, config },
-        query: dir ? { directory: dir } : undefined,
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+  async ({ client, dir, args }) => {
+    const { name, configType, commandArgs, environment, url, headers, enabled, timeout } = args;
+    if (configType === 'local' && (!commandArgs || commandArgs.length === 0)) {
+      throw new Error('legate_inject_mcp_server: commandArgs is required when configType is "local"');
     }
+    if (configType === 'remote' && !url) {
+      throw new Error('legate_inject_mcp_server: url is required when configType is "remote"');
+    }
+    const config: import('@opencode-ai/sdk').McpLocalConfig | import('@opencode-ai/sdk').McpRemoteConfig =
+      configType === 'local'
+        ? {
+            type: 'local',
+            command: commandArgs!,
+            ...(environment ? { environment } : {}),
+            ...(enabled !== undefined ? { enabled } : {}),
+            ...(timeout !== undefined ? { timeout } : {}),
+          }
+        : {
+            type: 'remote',
+            url: url!,
+            ...(headers ? { headers } : {}),
+            ...(enabled !== undefined ? { enabled } : {}),
+          };
+    const { data, error } = await client.mcp.add({
+      body: { name, config },
+      query: dir ? { directory: dir } : undefined,
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-08: legate_list_tools — list available tools per model (dual-endpoint)
-server.registerTool(
+registerServerTool(
   'legate_list_tools',
   {
     description: 'List tools available in the OpenCode instance. When provider and model are both omitted, returns all tool IDs (Array<string>) via GET /experimental/tool/ids. When both provider and model are supplied, returns tool details (Array<{ id, description, parameters }>) for that specific model via GET /experimental/tool. Both provider and model are required together when using the detailed endpoint.',
@@ -1961,40 +1672,35 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async ({ provider, model, directory }) => {
-    const dir = resolveDirectory(directory);
-    try {
-      if ((provider && !model) || (!provider && model)) {
-        throw new Error('legate_list_tools: provider and model must be supplied together; omit both for tool IDs only');
-      }
-      const serverUrl = resolveServerUrl();
-      if (provider && model) {
-        // GET /experimental/tool — requires BOTH provider + model (non-optional in SDK types)
-        const { data, error } = await getClient(serverUrl).tool.list({
-          query: {
-            provider,
-            model,
-            ...(dir ? { directory: dir } : {}),
-          },
-        });
-        if (error) throw apiError(error);
-        return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-      } else {
-        // GET /experimental/tool/ids — no required params
-        const { data, error } = await getClient(serverUrl).tool.ids({
-          query: dir ? { directory: dir } : undefined,
-        });
-        if (error) throw apiError(error);
-        return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-      }
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+  async ({ client, dir, args }) => {
+    const { provider, model } = args;
+    if ((provider && !model) || (!provider && model)) {
+      throw new Error('legate_list_tools: provider and model must be supplied together; omit both for tool IDs only');
+    }
+    if (provider && model) {
+      // GET /experimental/tool — requires BOTH provider + model (non-optional in SDK types)
+      const { data, error } = await client.tool.list({
+        query: {
+          provider,
+          model,
+          ...(dir ? { directory: dir } : {}),
+        },
+      });
+      if (error) throw apiError(error);
+      return data;
+    } else {
+      // GET /experimental/tool/ids — no required params
+      const { data, error } = await client.tool.ids({
+        query: dir ? { directory: dir } : undefined,
+      });
+      if (error) throw apiError(error);
+      return data;
     }
   }
 );
 
 // API-09: legate_find_file — find files in the workspace by name or pattern
-server.registerTool(
+registerServerTool(
   'legate_find_file',
   {
     description: 'Find files in the OpenCode workspace matching a query string. Returns Array<string> of matching file paths. Optionally include directories in results via dirs param. Pass directory to scope the search to a project root.',
@@ -2004,28 +1710,22 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async (args) => {
-    const { query: fileQuery, dirs, directory } = args;
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).find.files({
-        query: {
-          query: fileQuery,
-          ...(dirs ? { dirs } : {}),
-          ...(dir ? { directory: dir } : {}),
-        },
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir, args }) => {
+    const { query: fileQuery, dirs } = args;
+    const { data, error } = await client.find.files({
+      query: {
+        query: fileQuery,
+        ...(dirs ? { dirs } : {}),
+        ...(dir ? { directory: dir } : {}),
+      },
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
 // API-10: legate_get_file_content — get the content of a file in the workspace
-server.registerTool(
+registerServerTool(
   'legate_get_file_content',
   {
     description: 'Get the content of a file in the OpenCode workspace. Returns { type: "text"|"binary", content: string, diff?, patch?, encoding?, mimeType? }. path is the file path — absolute or relative to directory if provided.',
@@ -2034,22 +1734,16 @@ server.registerTool(
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
-  async (args) => {
-    const { path: filePath, directory } = args;
-    const dir = resolveDirectory(directory);
-    try {
-      const serverUrl = resolveServerUrl();
-      const { data, error } = await getClient(serverUrl).file.read({
-        query: {
-          path: filePath,
-          ...(dir ? { directory: dir } : {}),
-        },
-      });
-      if (error) throw apiError(error);
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
-    }
+  async ({ client, dir, args }) => {
+    const { path: filePath } = args;
+    const { data, error } = await client.file.read({
+      query: {
+        path: filePath,
+        ...(dir ? { directory: dir } : {}),
+      },
+    });
+    if (error) throw apiError(error);
+    return data;
   }
 );
 
