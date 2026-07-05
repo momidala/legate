@@ -411,6 +411,8 @@ server.registerTool(
       // Grace delay: OpenCode's status map updates asynchronously after the stream closes.
       // Poll for up to 2s so that a legate_session_status call immediately after legate_run
       // returns sees idle rather than a stale busy.
+      // Upstream bug: https://github.com/anomalyco/opencode/issues/35472 — delete this
+      // workaround once fixed upstream and the SDK is bumped past the fix.
       try {
         const graceDeadline = Date.now() + 2000;
         while (Date.now() < graceDeadline) {
@@ -1159,6 +1161,8 @@ server.registerTool(
       // cross-check against message history. If the last message is a COMPLETED assistant
       // message the agent has finished but OpenCode's status map has not caught up — break
       // and treat as idle.
+      // Upstream bug: https://github.com/anomalyco/opencode/issues/35472 — remove this
+      // escape once fixed upstream and the SDK is bumped past the fix.
       // legate-tia: role === 'assistant' alone is NOT sufficient — OpenCode creates the
       // assistant message row (role set, zero parts) the instant the prompt is accepted,
       // so any task busy >10s would match and legate_await would return empty/partial
