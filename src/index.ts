@@ -16,6 +16,10 @@ import { addSession, lookupSession, removeSession, readSessionMap } from './sess
 import { apiError, OpenCodeApiError, isNotFound } from './errors.js';
 // legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
 import { resolveEnv, resolveEnvInt } from './env.js';
+// legate-e1i: D-06/D-07 fallback chain extracted to routing.ts so it is unit-testable
+// without importing this module (which starts the MCP server on import). Behavior is
+// unchanged — the local resolveServerUrl wrapper below supplies BASE_URL.
+import { resolveServerUrl as resolveServerUrlImpl } from './routing.js';
 
 // CORE-08: Base URL from LEGATE_SERVER_URL env var (LEGATE_SERVER_URL and OPENCODE_URL
 // accepted with deprecation warnings). quietEmptyWarn preserves original behavior: an
@@ -54,30 +58,10 @@ function getClient(serverUrl: string): ReturnType<typeof createOpencodeClient> {
 //   3. no inputs → first entry in registry
 //   4. registry empty → BASE_URL (LEGATE_SERVER_URL env var)
 // D-07: unknown serverName throws with the exact message below.
+// legate-e1i: the implementation now lives in routing.ts (unit-testable). This wrapper
+// binds BASE_URL and the default config paths so all call sites are unchanged.
 function resolveServerUrl(sessionId?: string, serverName?: string): string {
-  if (sessionId) {
-    const entry = lookupSession(sessionId);
-    if (entry) return entry.url;
-    throw new Error(
-      `Session '${sessionId}' not found in sessions.json. It may have been deleted or never created via legate_create_session.`,
-    );
-  }
-  if (serverName) {
-    const reg = readRegistry();
-    const found = reg.servers.find((s) => s.name === serverName);
-    if (!found) {
-      throw new Error(
-        `Server '${serverName}' not found in registry. Run 'legate list-servers' to see registered servers.`,
-      );
-    }
-    return `http://${found.host}:${found.port}`;
-  }
-  const reg = readRegistry();
-  if (reg.servers.length > 0) {
-    const s = reg.servers[0];
-    return `http://${s.host}:${s.port}`;
-  }
-  return BASE_URL;
+  return resolveServerUrlImpl(sessionId, serverName, BASE_URL);
 }
 
 // legate-dxw: the D-12 isNotFound helper moved to src/errors.ts (imported above)

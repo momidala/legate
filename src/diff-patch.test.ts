@@ -1,64 +1,87 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPatch } from 'diff';
+import { getDiff } from './handlers.js';
+import { OpenCodeApiError } from './errors.js';
 
-// SURF-01 behavior tests for createPatch integration.
-// These verify the exact behavior the prefect_get_diff handler depends on.
+// legate-e1i: rework of the old SURF-01 tests. The previous version re-implemented
+// getDiff's mapping inline and mostly exercised the third-party `diff` library. These
+// tests drive the REAL getDiff (build/handlers.js) with a mock OpenCode client so the
+// production mapping — API-patch preference, createPatch fallback, error propagation,
+// empty-data handling — is what is actually under test.
 
-test('SURF-01: createPatch returns a string for a simple change', () => {
+type DiffData = Array<Record<string, unknown>>;
+
+// Minimal client stub — getDiff only touches client.session.diff({ path, query }).
+function mockClient(diffResult: { data?: DiffData; error?: unknown }): Parameters<typeof getDiff>[0] {
+  return {
+    session: {
+      diff: async () => diffResult,
+    },
+  } as unknown as Parameters<typeof getDiff>[0];
+}
+
+test('legate-e1i: getDiff prefers the API-provided patch when present', async () => {
+  const apiPatch = '--- a/foo.ts\n+++ b/foo.ts\n@@ real api patch @@\n';
+  const client = mockClient({
+    data: [{ file: 'foo.ts', before: 'x\n', after: 'y\n', additions: 1, deletions: 1, patch: apiPatch }],
+  });
+  const result = await getDiff(client, 'ses_1', undefined, undefined);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].patch, apiPatch, 'API patch must be used verbatim, not regenerated');
+  // Original fields are preserved.
+  assert.equal(result[0].file, 'foo.ts');
+  assert.equal(result[0].additions, 1);
+  assert.equal(result[0].deletions, 1);
+});
+
+test('legate-e1i: getDiff falls back to createPatch when the API omits patch', async () => {
+  const client = mockClient({
+    data: [{ file: 'bar.ts', before: 'old\n', after: 'new\n', additions: 1, deletions: 1 }],
+  });
+  const result = await getDiff(client, 'ses_1', undefined, undefined);
+  assert.equal(result.length, 1);
+  // Must match exactly what createPatch(file, before, after) produces.
+  assert.equal(result[0].patch, createPatch('bar.ts', 'old\n', 'new\n'));
+  assert.ok(result[0].patch.includes('-old'));
+  assert.ok(result[0].patch.includes('+new'));
+});
+
+test('legate-e1i: getDiff falls back to createPatch with empty strings when before/after are absent', async () => {
+  const client = mockClient({ data: [{ file: 'gone.ts', additions: 0, deletions: 0 }] });
+  const result = await getDiff(client, 'ses_1', undefined, undefined);
+  assert.equal(result[0].patch, createPatch('gone.ts', '', ''));
+});
+
+test('legate-e1i: getDiff throws OpenCodeApiError when the SDK returns an error', async () => {
+  const client = mockClient({ error: { name: 'NotFoundError', status: 404 } });
+  await assert.rejects(
+    () => getDiff(client, 'ses_1', undefined, undefined),
+    (err: unknown) => {
+      assert.ok(err instanceof OpenCodeApiError, 'error must be a typed OpenCodeApiError');
+      assert.equal(err.isNotFound(), true, 'a 404 error must report isNotFound()');
+      return true;
+    },
+  );
+});
+
+test('legate-e1i: getDiff returns [] when the API reports no changed files (empty data)', async () => {
+  const client = mockClient({ data: [] });
+  const result = await getDiff(client, 'ses_1', undefined, undefined);
+  assert.deepEqual(result, []);
+});
+
+test('legate-e1i: getDiff returns [] when the API returns null data', async () => {
+  const client = mockClient({ data: undefined });
+  const result = await getDiff(client, 'ses_1', undefined, undefined);
+  assert.deepEqual(result, []);
+});
+
+// Minimal createPatch sanity check retained — getDiff's fallback depends on this shape.
+test('legate-e1i: createPatch sanity — produces a string carrying the filename and +/- markers', () => {
   const patch = createPatch('a.ts', 'old\n', 'new\n');
   assert.equal(typeof patch, 'string');
-});
-
-test('SURF-01: patch contains the filename in the header', () => {
-  const patch = createPatch('a.ts', 'old\n', 'new\n');
-  assert.ok(patch.includes('a.ts'), `Expected patch to include "a.ts", got:\n${patch}`);
-});
-
-test('SURF-01: patch contains removed line marker for before content', () => {
-  const patch = createPatch('a.ts', 'old\n', 'new\n');
-  assert.ok(patch.includes('-old'), `Expected patch to include "-old", got:\n${patch}`);
-});
-
-test('SURF-01: patch contains added line marker for after content', () => {
-  const patch = createPatch('a.ts', 'old\n', 'new\n');
-  assert.ok(patch.includes('+new'), `Expected patch to include "+new", got:\n${patch}`);
-});
-
-test('SURF-01: empty before and after produces a valid patch string (no error)', () => {
-  const patch = createPatch('empty.ts', '', '');
-  assert.equal(typeof patch, 'string');
-});
-
-test('SURF-01: map over FileDiff array produces patch field on each element', () => {
-  // Simulate the handler logic: (data ?? []).map(d => ({ ...d, patch: createPatch(d.file, d.before, d.after) }))
-  const data = [
-    { file: 'a.ts', before: 'old\n', after: 'new\n', additions: 1, deletions: 1 },
-  ];
-  const withPatch = (data ?? []).map((d) => ({
-    ...d,
-    patch: createPatch(d.file, d.before, d.after),
-  }));
-  assert.equal(withPatch.length, 1);
-  const item = withPatch[0];
-  // All original fields preserved
-  assert.equal(item.file, 'a.ts');
-  assert.equal(item.before, 'old\n');
-  assert.equal(item.after, 'new\n');
-  assert.equal(item.additions, 1);
-  assert.equal(item.deletions, 1);
-  // patch field added as a string
-  assert.equal(typeof item.patch, 'string');
-  assert.ok(item.patch.includes('a.ts'));
-  assert.ok(item.patch.includes('-old'));
-  assert.ok(item.patch.includes('+new'));
-});
-
-test('SURF-01: empty array produces empty array (no patches to compute)', () => {
-  const data: Array<{ file: string; before: string; after: string; additions: number; deletions: number }> = [];
-  const withPatch = (data ?? []).map((d) => ({
-    ...d,
-    patch: createPatch(d.file, d.before, d.after),
-  }));
-  assert.equal(withPatch.length, 0);
+  assert.ok(patch.includes('a.ts'));
+  assert.ok(patch.includes('-old'));
+  assert.ok(patch.includes('+new'));
 });
