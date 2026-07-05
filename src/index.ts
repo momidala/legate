@@ -1912,7 +1912,7 @@ server.registerTool(
 server.registerTool(
   'legate_inject_mcp_server',
   {
-    description: 'Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
+    description: 'WARNING: with configType "local" this registers an arbitrary command that the OpenCode host will execute as a subprocess — only inject MCP servers you trust. Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
     inputSchema: z.object({
       name: z.string().describe('Unique name for this MCP server in the OpenCode MCP registry'),
       configType: z.enum(['local', 'remote']).describe('"local" for stdio subprocess MCP servers; "remote" for HTTP/SSE MCP servers'),
