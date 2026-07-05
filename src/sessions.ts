@@ -4,16 +4,14 @@ import { homedir } from 'node:os';
 import { lock, lockSync } from 'proper-lockfile';
 import { buildAuthHeader } from './auth.js';
 import { migrateIfNeeded } from './migration.js';
+// legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
+import { resolveEnvNum, _resetWarnFlags as _resetEnvWarnFlags } from './env.js';
 
 const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
 
-let warnedSessionTtl = false;
-let warnedOpenCodeSessionTtl = false;
-
-/** @internal — test use only. Resets the deprecation warn flag so each test starts clean. */
+/** @internal — test use only. Delegates to env.ts's shared warn-once state. */
 export function _resetWarnFlags(): void {
-  warnedSessionTtl = false;
-  warnedOpenCodeSessionTtl = false;
+  _resetEnvWarnFlags();
 }
 
 export interface SessionEntry {
@@ -56,32 +54,16 @@ _runMigration(SESSIONS_PATH, OLD_SESSIONS_DIR);
  * Resolve the session TTL from env vars, emitting a one-time deprecation warning for the
  * old PREFECT_/OPENCODE_ names. Extracted so both readSessionMap and pruneExpiredSessions
  * apply the same TTL. Called before file I/O so the warning still fires on the ENOENT path.
+ * legate-lcg: uses resolveEnvNum (Number()-based, no positivity check) rather than
+ * resolveEnvInt deliberately — a TTL of 0 ("prune everything immediately") and negative
+ * TTLs are accepted as-is today, and this refactor does not change that; only
+ * NaN/Infinity fall back to DEFAULT_SESSION_TTL_MS.
  */
 function resolveSessionTtlMs(): number {
-  const legateVal = process.env.LEGATE_SESSION_TTL_MS;
-  if (legateVal !== undefined) {
-    const n = Number(legateVal);
-    return Number.isFinite(n) ? n : DEFAULT_SESSION_TTL_MS;
-  }
-  const prefectVal = process.env.PREFECT_SESSION_TTL_MS;
-  if (prefectVal !== undefined) {
-    if (!warnedSessionTtl) {
-      console.error('[Legate] PREFECT_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
-      warnedSessionTtl = true;
-    }
-    const n = Number(prefectVal);
-    return Number.isFinite(n) ? n : DEFAULT_SESSION_TTL_MS;
-  }
-  const opencodeVal = process.env.OPENCODE_SESSION_TTL_MS;
-  if (opencodeVal !== undefined) {
-    if (!warnedOpenCodeSessionTtl) {
-      console.error('[Legate] OPENCODE_SESSION_TTL_MS is deprecated, use LEGATE_SESSION_TTL_MS');
-      warnedOpenCodeSessionTtl = true;
-    }
-    const n = Number(opencodeVal);
-    return Number.isFinite(n) ? n : DEFAULT_SESSION_TTL_MS;
-  }
-  return DEFAULT_SESSION_TTL_MS;
+  return resolveEnvNum(
+    ['LEGATE_SESSION_TTL_MS', 'PREFECT_SESSION_TTL_MS', 'OPENCODE_SESSION_TTL_MS'],
+    DEFAULT_SESSION_TTL_MS,
+  );
 }
 
 /**

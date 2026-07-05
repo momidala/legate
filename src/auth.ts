@@ -2,10 +2,8 @@
 // Credentials are read at call time (not module init) so env var changes take
 // effect without restarting the MCP server — same pattern as resolveDirectory().
 
-let warnedPassword = false;
-let warnedUsername = false;
-let warnedPrefectPassword = false;
-let warnedPrefectUsername = false;
+// legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
+import { resolveEnv, _resetWarnFlags as _resetEnvWarnFlags } from './env.js';
 
 /**
  * Reads LEGATE_SERVER_PASSWORD and LEGATE_SERVER_USERNAME at call time.
@@ -17,48 +15,21 @@ let warnedPrefectUsername = false;
  * Username defaults to 'opencode' per INFRA-05.
  * Token is Buffer.from('username:password').toString('base64') — Node.js Buffer,
  * not btoa(), for consistency with the Node.js runtime (D-03).
+ * quietEmptyWarn preserves original behavior: an empty PREFECT_/OPENCODE_
+ * fallback value still wins the chain, but does not itself warn.
  */
 export function buildAuthHeader(): Record<string, string> {
-  const password =
-    process.env.LEGATE_SERVER_PASSWORD ??
-    (() => {
-      const prefect = process.env.PREFECT_SERVER_PASSWORD;
-      if (prefect && !warnedPrefectPassword) {
-        console.error('[Legate] PREFECT_SERVER_PASSWORD is deprecated, use LEGATE_SERVER_PASSWORD');
-        warnedPrefectPassword = true;
-      }
-      return prefect;
-    })() ??
-    (() => {
-      const old = process.env.OPENCODE_SERVER_PASSWORD;
-      if (old && !warnedPassword) {
-        console.error('[Legate] OPENCODE_SERVER_PASSWORD is deprecated, use LEGATE_SERVER_PASSWORD');
-        warnedPassword = true;
-      }
-      return old;
-    })();
+  const password = resolveEnv(
+    ['LEGATE_SERVER_PASSWORD', 'PREFECT_SERVER_PASSWORD', 'OPENCODE_SERVER_PASSWORD'],
+    { quietEmptyWarn: true },
+  );
 
   if (!password) return {};
 
-  const username =
-    process.env.LEGATE_SERVER_USERNAME ??
-    (() => {
-      const prefect = process.env.PREFECT_SERVER_USERNAME;
-      if (prefect && !warnedPrefectUsername) {
-        console.error('[Legate] PREFECT_SERVER_USERNAME is deprecated, use LEGATE_SERVER_USERNAME');
-        warnedPrefectUsername = true;
-      }
-      return prefect;
-    })() ??
-    (() => {
-      const old = process.env.OPENCODE_SERVER_USERNAME;
-      if (old && !warnedUsername) {
-        console.error('[Legate] OPENCODE_SERVER_USERNAME is deprecated, use LEGATE_SERVER_USERNAME');
-        warnedUsername = true;
-      }
-      return old;
-    })() ??
-    'opencode';
+  const username = resolveEnv(
+    ['LEGATE_SERVER_USERNAME', 'PREFECT_SERVER_USERNAME', 'OPENCODE_SERVER_USERNAME'],
+    { quietEmptyWarn: true },
+  ) ?? 'opencode';
 
   const token = Buffer.from(`${username}:${password}`).toString('base64');
   return { Authorization: `Basic ${token}` };
@@ -84,10 +55,7 @@ export async function authFetch(request: Request): Promise<Response> {
   return globalThis.fetch(authed);
 }
 
-/** @internal — test use only */
+/** @internal — test use only. Delegates to env.ts's shared warn-once state. */
 export function _resetWarnFlags(): void {
-  warnedPassword = false;
-  warnedUsername = false;
-  warnedPrefectPassword = false;
-  warnedPrefectUsername = false;
+  _resetEnvWarnFlags();
 }

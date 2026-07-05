@@ -2,43 +2,26 @@ import { spawn } from 'node:child_process';
 import { buildAuthHeader } from './auth.js';
 import { resolveDirectory } from './config.js';
 import { ServerEntry } from './registry.js';
+// legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
+import { resolveEnvInt, _resetWarnFlags as _resetEnvWarnFlags } from './env.js';
 
 const POLL_INTERVAL_MS = 500; // D-12: hardcoded — fast enough for local startup
-
-let warnedAutostartTimeout = false;
-let warnedOpenCodeAutostartTimeout = false;
 
 // INFRA-13: Read at call time (not module init) so tests can override via process.env.
 // RENAME-04: LEGATE_AUTOSTART_TIMEOUT_MS preferred; PREFECT_AUTOSTART_TIMEOUT_MS and
 // OPENCODE_AUTOSTART_TIMEOUT_MS fall back with one-time warnings.
+// legate-lcg: resolveEnvInt also adds NaN/<=0 validation that the old
+// `parseInt(v, 10) || 30_000` pattern silently lacked.
 export function autostartTimeoutMs(): number {
-  const legate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  if (legate !== undefined) {
-    return parseInt(legate, 10) || 30_000;
-  }
-  const prefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-  if (prefect !== undefined) {
-    if (!warnedAutostartTimeout) {
-      console.error('[Legate] PREFECT_AUTOSTART_TIMEOUT_MS is deprecated, use LEGATE_AUTOSTART_TIMEOUT_MS');
-      warnedAutostartTimeout = true;
-    }
-    return parseInt(prefect, 10) || 30_000;
-  }
-  const opencode = process.env.OPENCODE_AUTOSTART_TIMEOUT_MS;
-  if (opencode !== undefined) {
-    if (!warnedOpenCodeAutostartTimeout) {
-      console.error('[Legate] OPENCODE_AUTOSTART_TIMEOUT_MS is deprecated, use LEGATE_AUTOSTART_TIMEOUT_MS');
-      warnedOpenCodeAutostartTimeout = true;
-    }
-    return parseInt(opencode, 10) || 30_000;
-  }
-  return 30_000;
+  return resolveEnvInt(
+    ['LEGATE_AUTOSTART_TIMEOUT_MS', 'PREFECT_AUTOSTART_TIMEOUT_MS', 'OPENCODE_AUTOSTART_TIMEOUT_MS'],
+    30_000,
+  );
 }
 
-/** @internal — test use only. Resets the deprecation warn flag so each test starts clean. */
+/** @internal — test use only. Delegates to env.ts's shared warn-once state. */
 export function _resetWarnFlags(): void {
-  warnedAutostartTimeout = false;
-  warnedOpenCodeAutostartTimeout = false;
+  _resetEnvWarnFlags();
 }
 
 // D-16: Per-server promise lock Map. Concurrent callers for the SAME server await the same

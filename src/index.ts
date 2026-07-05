@@ -14,54 +14,26 @@ import { addSession, lookupSession, removeSession, readSessionMap } from './sess
 // legate-dxw: typed SDK errors. isNotFound is re-exported from errors.ts so the
 // existing pre-throw `if (isNotFound(error))` call sites keep working unchanged.
 import { apiError, OpenCodeApiError, isNotFound } from './errors.js';
+// legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
+import { resolveEnv, resolveEnvInt } from './env.js';
 
-// CORE-08: Base URL from LEGATE_SERVER_URL env var (LEGATE_SERVER_URL and OPENCODE_URL accepted with deprecation warnings)
-let warnedServerUrl = false;
-let warnedOpenCodeUrl = false;
+// CORE-08: Base URL from LEGATE_SERVER_URL env var (LEGATE_SERVER_URL and OPENCODE_URL
+// accepted with deprecation warnings). quietEmptyWarn preserves original behavior: an
+// empty PREFECT_/OPENCODE_ fallback value still wins the `??` chain, but does not warn.
 const BASE_URL =
-  process.env.LEGATE_SERVER_URL ??
-  (() => {
-    const old = process.env.PREFECT_SERVER_URL;
-    if (old && !warnedServerUrl) {
-      console.error('[Legate] PREFECT_SERVER_URL is deprecated, use LEGATE_SERVER_URL');
-      warnedServerUrl = true;
-    }
-    return old;
-  })() ??
-  (() => {
-    const old = process.env.OPENCODE_URL;
-    if (old && !warnedOpenCodeUrl) {
-      console.error('[Legate] OPENCODE_URL is deprecated, use LEGATE_SERVER_URL');
-      warnedOpenCodeUrl = true;
-    }
-    return old;
-  })() ??
+  resolveEnv(['LEGATE_SERVER_URL', 'PREFECT_SERVER_URL', 'OPENCODE_URL'], { quietEmptyWarn: true }) ??
   'http://localhost:4096';
 
-let warnedTimeoutMs = false;
-let warnedOpenCodeTimeoutMs = false;
-function resolveTimeoutMs(): number {
-  const legateVal = process.env.LEGATE_TIMEOUT_MS;
-  if (legateVal) return parseInt(legateVal, 10) || 120_000;
-  const prefectVal = process.env.PREFECT_TIMEOUT_MS;
-  if (prefectVal) {
-    if (!warnedTimeoutMs) {
-      console.error('[Legate] PREFECT_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
-      warnedTimeoutMs = true;
-    }
-    return parseInt(prefectVal, 10) || 120_000;
-  }
-  const opencodeVal = process.env.OPENCODE_TIMEOUT_MS;
-  if (opencodeVal) {
-    if (!warnedOpenCodeTimeoutMs) {
-      console.error('[Legate] OPENCODE_TIMEOUT_MS is deprecated, use LEGATE_TIMEOUT_MS');
-      warnedOpenCodeTimeoutMs = true;
-    }
-    return parseInt(opencodeVal, 10) || 120_000;
-  }
-  return 120_000;
-}
-const TIMEOUT_MS = resolveTimeoutMs();
+// legate-lcg: requireTruthy preserves the original `if (legateVal)` gate — an empty
+// LEGATE_TIMEOUT_MS falls through to PREFECT_TIMEOUT_MS silently rather than winning.
+// resolveEnvInt also adds NaN/<=0 validation that the old
+// `parseInt(v, 10) || 120_000` pattern silently lacked (0 or negative previously
+// resolved with no warning at all).
+const TIMEOUT_MS = resolveEnvInt(
+  ['LEGATE_TIMEOUT_MS', 'PREFECT_TIMEOUT_MS', 'OPENCODE_TIMEOUT_MS'],
+  120_000,
+  { requireTruthy: true },
+);
 
 // D-01..D-03: per-URL client cache. Replaces the single global client so the
 // MCP server can route tool calls to multiple OpenCode instances.

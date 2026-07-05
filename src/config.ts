@@ -3,8 +3,8 @@
 //   index.ts → fetch.ts → autostart.ts → index.ts (was)
 //   index.ts → fetch.ts → autostart.ts → config.ts (now — no cycle)
 
-let warnedDefaultProject = false;
-let warnedPrefectDefaultProject = false;
+// legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
+import { resolveEnv } from './env.js';
 
 /**
  * Fallback chain: per-tool param → LEGATE_DEFAULT_PROJECT env var →
@@ -14,26 +14,16 @@ let warnedPrefectDefaultProject = false;
  * directory tracking when no explicit directory is provided.
  * process.env is read at call time (not module init) so that changes
  * to LEGATE_DEFAULT_PROJECT take effect without restarting the MCP server.
+ * quietEmptyWarn preserves original behavior: an empty PREFECT_/OPENCODE_
+ * fallback value still wins the chain (the `??` semantics), but does not
+ * itself trigger the deprecation warning.
  */
 export function resolveDirectory(perToolParam: string | undefined): string | undefined {
   return (
     perToolParam ??
-    process.env.LEGATE_DEFAULT_PROJECT ??
-    (() => {
-      const prefect = process.env.PREFECT_DEFAULT_PROJECT;
-      if (prefect && !warnedPrefectDefaultProject) {
-        console.error('[Legate] PREFECT_DEFAULT_PROJECT is deprecated, use LEGATE_DEFAULT_PROJECT');
-        warnedPrefectDefaultProject = true;
-      }
-      return prefect;
-    })() ??
-    (() => {
-      const old = process.env.OPENCODE_DEFAULT_PROJECT;
-      if (old && !warnedDefaultProject) {
-        console.error('[Legate] OPENCODE_DEFAULT_PROJECT is deprecated, use LEGATE_DEFAULT_PROJECT');
-        warnedDefaultProject = true;
-      }
-      return old;
-    })()
+    resolveEnv(
+      ['LEGATE_DEFAULT_PROJECT', 'PREFECT_DEFAULT_PROJECT', 'OPENCODE_DEFAULT_PROJECT'],
+      { quietEmptyWarn: true },
+    )
   );
 }
