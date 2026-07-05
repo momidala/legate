@@ -507,7 +507,7 @@ test('SELFUP-01: install-command writes ~/.claude/commands/legate-update.md when
     assert.ok(existsSync(dest), 'legate-update.md must be written');
     const content = readFileSync(dest, 'utf8');
     // SELFUP-03: update command embedded
-    assert.match(content, /npm install -g legate@latest/);
+    assert.match(content, /npm install -g @momidala\/legate@latest/);
     // SELFUP-04: new version display embedded
     assert.match(content, /legate updated to v/);
     // SELFUP-05: restart reminder embedded
