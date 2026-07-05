@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # `build/` is gitignored and does not exist on a fresh checkout. The
+      # package's `postinstall` script runs `node ./build/cli.js
+      # install-command`, which fails with MODULE_NOT_FOUND because that file
+      # doesn't exist yet (verified: a plain `npm ci` on a fresh clone exits
+      # non-zero here). `npm test` runs `tsc` before the test suite, which
+      # produces `build/` itself, so skipping lifecycle scripts on install is
+      # safe and unblocks CI.
+      - run: npm ci --ignore-scripts
+
+      - run: npm test
+
+  pack-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      # See comment in the `test` job: postinstall requires build/ to exist.
+      - run: npm ci --ignore-scripts
+
+      # Build first so the dry-run reflects the real published contents of
+      # `build/`, not just the always-present `scripts/`/README files.
+      - run: npm run build
+
+      # Fails if the `files` array in package.json regresses (e.g. `scripts/`
+      # accidentally dropped) or the package otherwise fails to pack.
+      - run: npm pack --dry-run
