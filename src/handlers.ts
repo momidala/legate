@@ -3,6 +3,7 @@ import { createPatch } from 'diff';
 import { z } from 'zod';
 import { PartSchema } from './parts.js';
 import { atomicCheckAndAdd } from './sessions.js';
+import { apiError } from './errors.js'; // legate-dxw: typed SDK errors
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -40,7 +41,7 @@ export async function createSession(
     },
     query: directory ? { directory } : undefined,
   });
-  if (error) throw new Error(JSON.stringify(error));
+  if (error) throw apiError(error); // legate-dxw
   if (!data) throw new Error('createSession: API returned no data and no error');
   // D-11: persist sessionId → server mapping immediately so subsequent tool calls
   // route to the correct server even after an MCP server restart. Both serverUrl
@@ -100,7 +101,7 @@ export async function runPrompt(
     query: directory ? { directory } : undefined,
     signal,
   });
-  if (error) throw new Error(JSON.stringify(error));
+  if (error) throw apiError(error); // legate-dxw
   if (!data) throw new Error('runPrompt: API returned no data and no error');
   const parseResult = PartSchema.array().safeParse(data.parts);
   if (!parseResult.success) {
@@ -130,7 +131,7 @@ export async function getDiff(
       ...(directory ? { directory } : {}),
     },
   });
-  if (error) throw new Error(JSON.stringify(error));
+  if (error) throw apiError(error); // legate-dxw
   return (data ?? []).map((d) => {
     const raw = d as Record<string, unknown>;
     const apiPatch = typeof raw.patch === 'string' ? raw.patch : undefined;

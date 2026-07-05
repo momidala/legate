@@ -11,6 +11,9 @@ import { PartSchema } from './parts.js';
 import { createSession, runPrompt, getDiff } from './handlers.js';
 import { readRegistry } from './registry.js';
 import { addSession, lookupSession, removeSession, readSessionMap } from './sessions.js';
+// legate-dxw: typed SDK errors. isNotFound is re-exported from errors.ts so the
+// existing pre-throw `if (isNotFound(error))` call sites keep working unchanged.
+import { apiError, OpenCodeApiError, isNotFound } from './errors.js';
 
 // CORE-08: Base URL from LEGATE_SERVER_URL env var (LEGATE_SERVER_URL and OPENCODE_URL accepted with deprecation warnings)
 let warnedServerUrl = false;
@@ -105,14 +108,8 @@ function resolveServerUrl(sessionId?: string, serverName?: string): string {
   return BASE_URL;
 }
 
-// D-12 helper: SDK returns { data, error } pairs; 404 surfaces as either { status: 404 }
-// or { name: 'NotFoundError' } depending on the SDK version and endpoint.
-// Without this check, every API error (400, 403, 500) would be treated as a stale session.
-function isNotFound(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const e = error as Record<string, unknown>;
-  return e.status === 404 || e.name === 'NotFoundError';
-}
+// legate-dxw: the D-12 isNotFound helper moved to src/errors.ts (imported above)
+// alongside OpenCodeApiError, which centralizes the 404 detection logic.
 
 // Resolve the canonical server name for a URL — used by entry points to write
 // sessions.json with both name and URL (D-08). Falls back to the supplied
@@ -200,7 +197,7 @@ server.registerTool(
               `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
             );
           }
-          throw new Error(JSON.stringify(error));
+          throw apiError(error);
         }
         return { content: [{ type: 'text', text: String(data) }] };
       }
@@ -233,7 +230,7 @@ server.registerTool(
           });
           if (error) {
             if (isNotFound(error)) { misses.push(`${target.name} (${target.url}): not found`); continue; }
-            throw new Error(JSON.stringify(error));
+            throw apiError(error);
           }
           return {
             content: [{
@@ -357,11 +354,8 @@ server.registerTool(
           isError: true,
         };
       }
-      // D-12 stale-session detection inside the JSON-encoded error string from runPrompt
-      if (typeof (err as Error).message === 'string' && (
-        (err as Error).message.includes('"status":404') ||
-        (err as Error).message.includes('"NotFoundError"')
-      )) {
+      // D-12 stale-session detection — runPrompt throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
+      if (err instanceof OpenCodeApiError && err.isNotFound()) {
         const entry = lookupSession(sessionId);
         removeSession(sessionId);
         const staleUrl = entry?.url ?? resolveServerUrl();
@@ -467,7 +461,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return {
         content: [
@@ -498,11 +492,8 @@ server.registerTool(
       const diffs = await getDiff(getClient(serverUrl), sessionId, messageID, dir);
       return { content: [{ type: 'text', text: JSON.stringify(diffs) }] };
     } catch (err) {
-      // D-12 stale-session detection inside the JSON-encoded error string from getDiff
-      if (typeof (err as Error).message === 'string' && (
-        (err as Error).message.includes('"status":404') ||
-        (err as Error).message.includes('"NotFoundError"')
-      )) {
+      // D-12 stale-session detection — getDiff throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
+      if (err instanceof OpenCodeApiError && err.isNotFound()) {
         const entry = lookupSession(sessionId);
         removeSession(sessionId);
         const staleUrl = entry?.url ?? resolveServerUrl();
@@ -555,7 +546,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -596,7 +587,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       // Persist the forked session so subsequent tool calls can route to the same server.
       // Store parentId so legate_session_children can find fork-created children locally.
@@ -641,7 +632,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -666,7 +657,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).session.list({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -702,7 +693,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -731,7 +722,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).session.status({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       if (sessionId) {
         // Return just the requested session; treat missing-from-map as idle (consistent with legate_await)
         const entry = (data as Record<string, unknown>)[sessionId] ?? { type: 'idle' };
@@ -775,7 +766,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -813,7 +804,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -850,7 +841,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       removeSession(sessionId);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
@@ -890,7 +881,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -927,7 +918,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       // OpenCode only tracks sessions created with parentID (native children).
       // Fork-created sessions are tracked locally in sessions.json with parentId set.
@@ -975,7 +966,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1033,7 +1024,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       if (!data) throw new Error('Session command returned no data');
       const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
@@ -1211,7 +1202,7 @@ server.registerTool(
               `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`
             );
           }
-          throw new Error(JSON.stringify(error));
+          throw apiError(error);
         }
         return { content: [{ type: 'text', text: JSON.stringify({ sessionId: providedSessionId }) }] };
       } catch (err) {
@@ -1241,7 +1232,7 @@ server.registerTool(
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify({ sessionId: session.id }) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1285,9 +1276,9 @@ server.registerTool(
           );
         }
       }
-      if (statusResult.error) throw new Error(JSON.stringify(statusResult.error));
-      if (todoResult.error) throw new Error(JSON.stringify(todoResult.error));
-      if (diffResult.error) throw new Error(JSON.stringify(diffResult.error));
+      if (statusResult.error) throw apiError(statusResult.error);
+      if (todoResult.error) throw apiError(todoResult.error);
+      if (diffResult.error) throw apiError(diffResult.error);
       const status = (statusResult.data as Record<string, { type: string }>)[sessionId]?.type ?? 'unknown';
       const todos = todoResult.data ?? [];
       const changedFiles = (diffResult.data ?? []).map((d) => ({
@@ -1333,7 +1324,7 @@ server.registerTool(
       let staleBusyCount = 0;
       while (true) {
         const { data, error } = await getClient(serverUrl).session.status({ query: dir ? { directory: dir } : undefined });
-        if (error) throw new Error(JSON.stringify(error));
+        if (error) throw apiError(error);
         const statusEntry = (data as Record<string, { type: string }>)[sessionId];
         // Treat undefined (session not in map) as idle — may have completed before first poll
         if (!statusEntry || statusEntry.type === 'idle') break;
@@ -1376,7 +1367,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(messagesResult.error));
+        throw apiError(messagesResult.error);
       }
       // D-12: find last assistant message — same shape as legate_run result
       const msgs = messagesResult.data ?? [];
@@ -1390,11 +1381,8 @@ server.registerTool(
       // D-13: return shape matches legate_delegate for easy substitution
       return { content: [{ type: 'text', text: JSON.stringify({ result: { info: last.info, parts: validatedParts }, diff }) }] };
     } catch (err) {
-      // D-12 stale-session detection inside the JSON-encoded error string from getDiff
-      if (typeof (err as Error).message === 'string' && (
-        (err as Error).message.includes('"status":404') ||
-        (err as Error).message.includes('"NotFoundError"')
-      )) {
+      // D-12 stale-session detection — getDiff/status throw OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
+      if (err instanceof OpenCodeApiError && err.isNotFound()) {
         const entry = lookupSession(sessionId);
         removeSession(sessionId);
         const staleUrl = entry?.url ?? resolveServerUrl();
@@ -1427,7 +1415,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).app.agents({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       const mapped = (data ?? []).map((a) => ({
         name: a.name,
         description: a.description,
@@ -1456,7 +1444,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).provider.list({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       const mapped = (data?.all ?? []).map((p) => ({
         id: p.id,
         name: p.name,
@@ -1487,7 +1475,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).find.symbols({
         query: { query: symbolQuery, ...(dir ? { directory: dir } : {}) },
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       const mapped = (data ?? []).map((sym) => {
         if (!sym.location.uri.startsWith('file://')) return null;
         const absolutePath = decodeURIComponent(sym.location.uri.replace(/^file:\/\//, ''));
@@ -1537,7 +1525,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1574,7 +1562,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1644,7 +1632,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify({ existed, accepted: data }) }] };
     } catch (err) {
@@ -1693,7 +1681,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1730,7 +1718,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1755,7 +1743,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).vcs.get({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1779,7 +1767,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).file.status({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1803,7 +1791,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).mcp.status({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1828,7 +1816,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).config.get({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1852,7 +1840,7 @@ server.registerTool(
       const { data, error } = await getClient(serverUrl).command.list({
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1899,7 +1887,7 @@ server.registerTool(
             `Call legate_session_list to see active sessions, or legate_create_session to start a new one.`,
           );
         }
-        throw new Error(JSON.stringify(error));
+        throw apiError(error);
       }
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
@@ -1954,7 +1942,7 @@ server.registerTool(
         body: { name, config },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -1989,14 +1977,14 @@ server.registerTool(
             ...(dir ? { directory: dir } : {}),
           },
         });
-        if (error) throw new Error(JSON.stringify(error));
+        if (error) throw apiError(error);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } else {
         // GET /experimental/tool/ids — no required params
         const { data, error } = await getClient(serverUrl).tool.ids({
           query: dir ? { directory: dir } : undefined,
         });
-        if (error) throw new Error(JSON.stringify(error));
+        if (error) throw apiError(error);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       }
     } catch (err) {
@@ -2028,7 +2016,7 @@ server.registerTool(
           ...(dir ? { directory: dir } : {}),
         },
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
@@ -2057,7 +2045,7 @@ server.registerTool(
           ...(dir ? { directory: dir } : {}),
         },
       });
-      if (error) throw new Error(JSON.stringify(error));
+      if (error) throw apiError(error);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: String(err) }], isError: true };
