@@ -1,27 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { z } from 'zod';
+// legate-o1u: import the REAL registered schema instead of a phantom local copy. The
+// assertions below now exercise exactly the schema the tool registers (../schemas.ts,
+// used by tools/session.ts), so schema drift can no longer pass this test unnoticed.
+import { SessionCommandInputSchema as CommandInputSchema } from './schemas.js';
 
 // CMD-01 behavior tests for legate_session_command input schema.
 // These verify that the Zod schema for the tool's inputSchema enforces
 // the correct shape — in particular that `model` is a plain string (NOT
 // { providerID, modelID }) and that `command` + `arguments` are required.
-
-// Define the schema exactly as it will appear in the tool registration.
-// These tests are RED-phase: they assert schema behaviors before the tool
-// is wired up to the MCP server.
-
-const CommandInputSchema = z.object({
-  sessionId: z.string().describe('Session ID'),
-  command: z.string().describe('The slash command name without the leading slash'),
-  arguments: z.string().describe('Arguments string to pass to the command'),
-  messageID: z.string().optional().describe('Optional message ID for context'),
-  agent: z.string().optional().describe('Optional agent override'),
-  model: z
-    .string()
-    .optional()
-    .describe('Optional model override as a plain string'),
-});
 
 test('CMD-01: schema accepts required fields only', () => {
   const result = CommandInputSchema.safeParse({

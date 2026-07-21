@@ -1,6 +1,7 @@
 import { authFetch } from './auth.js';
 import { ensureOpencodeRunning } from './autostart.js';
-import { readRegistry, type ServerEntry } from './registry.js';
+// legate-8jm: findServerByUrl owns the host:port→entry match (one URL-format definition).
+import { findServerByUrl, type ServerEntry } from './registry.js';
 
 // Node.js fetch wraps ECONNREFUSED in err.cause, not in the top-level message.
 // String(err) === "TypeError: fetch failed" — no ECONNREFUSED there.
@@ -26,10 +27,9 @@ function isConnRefused(err: unknown): boolean {
  */
 function resolveServerFromRequest(request: Request): ServerEntry {
   const requestUrl = new URL(request.url);
-  const reg = readRegistry();
-  const matched = reg.servers.find(
-    (s) => s.host === requestUrl.hostname && String(s.port) === requestUrl.port,
-  );
+  // legate-8jm: match on the canonical http://host:port form (findServerByUrl), which
+  // is equivalent to the prior host-AND-port comparison for the http URLs the SDK issues.
+  const matched = findServerByUrl(`http://${requestUrl.hostname}:${requestUrl.port}`);
   if (matched) return matched;
   return {
     name: requestUrl.hostname,

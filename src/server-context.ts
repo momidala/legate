@@ -22,7 +22,8 @@ import { apiError, isNotFound } from './errors.js';
 // legate-lcg: env chain + warn-once bookkeeping lives in env.ts.
 import { resolveEnv, resolveEnvInt } from './env.js';
 import { lookupSession, removeSession } from './sessions.js';
-import { readRegistry } from './registry.js';
+// legate-8jm: URL→entry lookup goes through findServerByUrl (one URL-format definition).
+import { findServerByUrl } from './registry.js';
 // legate-e1i: D-06/D-07 fallback chain lives in routing.ts (unit-testable). The
 // context's resolveServerUrl wrapper binds BASE_URL so all call sites stay unchanged.
 import { resolveServerUrl as resolveServerUrlImpl } from './routing.js';
@@ -140,8 +141,7 @@ export function createServerContext(server: McpServer): ServerContext {
   // no registry match exists (registry-empty fallback path).
   function serverNameForUrl(serverUrl: string, serverParam?: string): string {
     if (serverParam) return serverParam;
-    const reg = readRegistry();
-    const found = reg.servers.find((s) => `http://${s.host}:${s.port}` === serverUrl);
+    const found = findServerByUrl(serverUrl);
     return found?.name ?? 'default';
   }
 

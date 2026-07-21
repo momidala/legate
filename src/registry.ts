@@ -16,6 +16,53 @@ export interface Registry {
   servers: ServerEntry[];
 }
 
+// legate-8jm: per-entry validation for readRegistry. The routing-critical fields
+// (name/host/port) are strict — a broken one would feed a bad URL into serverUrl()
+// and misroute every tool call, so such an entry is SKIPPED rather than trusted.
+// providerID/modelID/maxSessions are intentionally lenient (optional): every code
+// path already treats them as possibly-absent (`entry?.providerID && entry?.modelID`),
+// so a sparse-but-routable hand-edited entry must keep working, not be dropped.
+//
+// This is a hand-written guard rather than zod ON PURPOSE: registry.ts sits on the CLI's
+// import graph (cli.js → startup.js → registry.js), and that graph must resolve inside an
+// isolated global install that has NO third-party node_modules (enforced by cli.test.js's
+// runCliAsGlobal). Pulling zod in here would break `legate install-command`. The canonical
+// zod mirror of this shape lives in src/schemas.ts (ServerEntrySchema); its drift against
+// this guard is asserted in registry.test.ts.
+export function isValidServerEntry(entry: unknown): entry is ServerEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const e = entry as Record<string, unknown>;
+  if (typeof e.name !== 'string' || e.name.length === 0) return false;
+  if (typeof e.host !== 'string' || e.host.length === 0) return false;
+  if (typeof e.port !== 'number' || !Number.isInteger(e.port) || e.port <= 0) return false;
+  if (e.providerID !== undefined && typeof e.providerID !== 'string') return false;
+  if (e.modelID !== undefined && typeof e.modelID !== 'string') return false;
+  if (e.maxSessions !== undefined && typeof e.maxSessions !== 'number') return false;
+  return true;
+}
+
+// legate-8jm: the ONE place that formats a registry entry into its base URL. Every
+// other site that used to inline `http://${s.host}:${s.port}` now calls this so the
+// URL shape has a single definition.
+export function serverUrl(entry: Pick<ServerEntry, 'host' | 'port'>): string {
+  return `http://${entry.host}:${entry.port}`;
+}
+
+// legate-8jm: registry lookup helpers — replace the scattered reg.servers.find(...)
+// call sites. Each reads the registry fresh (matching prior inline behavior) and
+// accepts an optional path so unit tests / routing.ts can inject a temp registry.
+export function findServerByName(name: string, registryPath: string = REGISTRY_PATH): ServerEntry | undefined {
+  return readRegistry(registryPath).servers.find((s) => s.name === name);
+}
+
+export function findServerByUrl(url: string, registryPath: string = REGISTRY_PATH): ServerEntry | undefined {
+  return readRegistry(registryPath).servers.find((s) => serverUrl(s) === url);
+}
+
+export function firstServer(registryPath: string = REGISTRY_PATH): ServerEntry | undefined {
+  return readRegistry(registryPath).servers[0];
+}
+
 const REGISTRY_DIR = join(homedir(), '.config', 'legate');
 export const REGISTRY_PATH = join(REGISTRY_DIR, 'servers.json');
 
@@ -41,10 +88,30 @@ export function _runRegistryMigration(newPath: string, oldDir: string): void {
 export function readRegistry(registryPath: string = REGISTRY_PATH): Registry {
   try {
     const parsed = JSON.parse(readFileSync(registryPath, 'utf8'));
+    // Top-level shape error still throws: a file that isn't { servers: [...] } is
+    // unusable, so callers should see it loudly (unchanged from before legate-8jm).
     if (!parsed || !Array.isArray(parsed.servers)) {
       throw new Error(`malformed registry at ${registryPath}: expected { servers: [...] }`);
     }
-    return parsed as Registry;
+    // legate-8jm: validate entries individually. A single hand-edited bad entry must
+    // NOT brick every tool — warn to stderr (naming the offending entry) and SKIP it,
+    // keeping the rest of the registry usable. The ORIGINAL entry object is pushed on
+    // success (not the parsed copy) so any extra/forward-compatible fields survive.
+    const validated: ServerEntry[] = [];
+    (parsed.servers as unknown[]).forEach((entry, i) => {
+      if (isValidServerEntry(entry)) {
+        validated.push(entry);
+      } else {
+        const name =
+          entry && typeof entry === 'object' && 'name' in entry
+            ? String((entry as Record<string, unknown>).name)
+            : '(unnamed)';
+        console.error(
+          `[Legate] Skipping malformed registry entry at index ${i} (name: ${name}) — missing/invalid name, host, or port.`,
+        );
+      }
+    });
+    return { servers: validated };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { servers: [] };

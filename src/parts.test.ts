@@ -4,9 +4,63 @@ import {
   PartSchema,
   ToolStateSchema,
   ApiErrorSchema,
+  validateParts,
 } from './parts.js';
 
 const BASE = { id: 'p_01', sessionID: 'ses_01', messageID: 'msg_01' };
+
+// legate-ngl: validateParts — per-element salvage with honest typing.
+
+function silenceStderr<T>(fn: () => T): T {
+  const original = console.error;
+  console.error = () => {};
+  try { return fn(); } finally { console.error = original; }
+}
+
+test('legate-ngl: validateParts returns all parts and no dropped when every element is valid', () => {
+  const raw = [
+    { ...BASE, type: 'text', text: 'a' },
+    { ...BASE, type: 'agent', name: 'qwen' },
+  ];
+  const { parts, dropped } = validateParts(raw, 'test');
+  assert.equal(parts.length, 2);
+  assert.equal(dropped, undefined, 'dropped is omitted on the happy path');
+});
+
+test('legate-ngl: validateParts salvages valid elements and counts the invalid ones', () => {
+  const raw = [
+    { ...BASE, type: 'text', text: 'keep me' },
+    { ...BASE, type: 'bogus' },          // invalid discriminator
+    { ...BASE, type: 'agent', name: 'q' },
+    { nope: true },                       // not a part at all
+  ];
+  const { parts, dropped } = silenceStderr(() => validateParts(raw, 'test'));
+  assert.equal(dropped, 2, 'two invalid elements dropped');
+  assert.equal(parts.length, 2, 'two valid elements salvaged');
+  assert.deepEqual((parts as Array<{ type: string }>).map((p) => p.type), ['text', 'agent']);
+});
+
+test('legate-ngl: validateParts emits exactly one warning naming the source and counts', () => {
+  const raw = [{ ...BASE, type: 'text', text: 'ok' }, { ...BASE, type: 'bogus' }];
+  let calls = 0;
+  let captured = '';
+  const original = console.error;
+  console.error = (...args: unknown[]) => { calls++; captured = args.map(String).join(' '); };
+  try {
+    validateParts(raw, 'legate_await');
+  } finally {
+    console.error = original;
+  }
+  assert.equal(calls, 1, 'exactly one warning');
+  assert.ok(captured.includes('legate_await'), `warning should name the source: ${captured}`);
+  assert.ok(captured.includes('1 of 2'), `warning should count failures: ${captured}`);
+});
+
+test('legate-ngl: validateParts handles non-array input as an empty salvage set', () => {
+  const { parts, dropped } = silenceStderr(() => validateParts({ not: 'an array' }, 'test'));
+  assert.deepEqual(parts, []);
+  assert.equal(dropped, 0);
+});
 
 test('PartSchema parses TextPart', () => {
   const p = { ...BASE, type: 'text', text: 'hello' };

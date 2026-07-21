@@ -228,3 +228,37 @@ export const PartSchema = z.discriminatedUnion('type', [
   CompactionPartSchema,
   SubtaskPartSchema,
 ]);
+
+export type Part = z.infer<typeof PartSchema>;
+
+/**
+ * legate-ngl: validate an untrusted `parts` array against PartSchema, honestly.
+ *
+ * The three former call sites (handlers.runPrompt, session_command, legate_await) each
+ * did `PartSchema.array().safeParse(raw)`, logged a warning on failure, then cast the
+ * WHOLE unvalidated array through `as Part[]` — a lie: on failure the returned value was
+ * never validated. This helper replaces that pattern with per-element salvage:
+ *   - all elements valid → return the validated array.
+ *   - some invalid       → keep the valid elements, drop the invalid ones, emit ONE
+ *                          warning, and report how many were dropped.
+ * The return type is honest — `Part[] | unknown[]` — so no caller can pretend the
+ * salvaged/mixed array is fully typed.
+ *
+ * Callers surface `partsDropped: dropped` in their payload ONLY when dropped > 0, so the
+ * happy-path response shape is unchanged.
+ */
+export function validateParts(raw: unknown, source: string): { parts: Part[] | unknown[]; dropped?: number } {
+  const whole = PartSchema.array().safeParse(raw);
+  if (whole.success) return { parts: whole.data };
+  // Salvage per element. Non-array input yields an empty salvage set (nothing to keep).
+  const elements = Array.isArray(raw) ? raw : [];
+  const valid: Part[] = [];
+  let dropped = 0;
+  for (const el of elements) {
+    const one = PartSchema.safeParse(el);
+    if (one.success) valid.push(one.data);
+    else dropped++;
+  }
+  console.error(`PartSchema validation warning (${source}): ${dropped} of ${elements.length} parts failed validation`);
+  return { parts: valid, dropped };
+}

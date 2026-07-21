@@ -4,15 +4,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ServerContext } from '../server-context.js';
 import { resolveDirectory } from '../config.js';
-import { createSession, runPrompt, getDiff } from '../handlers.js';
-import { readRegistry } from '../registry.js';
+import { createSessionOnServer, runPrompt, getDiff } from '../handlers.js';
 import { lookupSession } from '../sessions.js';
 import { apiError, OpenCodeApiError, isNotFound } from '../errors.js';
-import { PartSchema } from '../parts.js';
+import { validateParts } from '../parts.js';
 
 export function registerComposites(server: McpServer, ctx: ServerContext): void {
   const {
-    TIMEOUT_MS, getClient, resolveServerUrl, serverNameForUrl,
+    TIMEOUT_MS, getClient, resolveServerUrl,
     okJson, errText, handleNotFound, staleErrorResponse,
   } = ctx;
 
@@ -76,19 +75,12 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         }
       }
 
-      // Create-new-session path (existing logic — unchanged)
+      // Create-new-session path. legate-0ys(b): resolve-server → model-lookup →
+      // createSession is now the shared createSessionOnServer helper.
       const dir = resolveDirectory(directory);
       let sessionId: string | undefined;
       try {
-        const serverUrl = resolveServerUrl(undefined, serverParam);
-        const serverName = serverNameForUrl(serverUrl, serverParam);
-        const c = getClient(serverUrl);
-        const reg2 = readRegistry();
-        const serverEntry2 = reg2.servers.find((s) => s.name === serverName);
-        const model2 = (serverEntry2?.providerID && serverEntry2?.modelID)
-          ? { providerID: serverEntry2.providerID, modelID: serverEntry2.modelID }
-          : undefined;
-        const session = await createSession(c, title, dir, undefined, serverUrl, serverName, model2, serverEntry2?.maxSessions);
+        const { session, client: c } = await createSessionOnServer(ctx, { title, dir, serverParam });
         sessionId = session.id;
         const result = await runPrompt(c, sessionId, prompt, { model, agent, system }, dir, controller.signal);
         clearTimeout(timer);
@@ -166,18 +158,10 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         }
       }
 
-      // Create-new-session path (existing logic — unchanged)
+      // Create-new-session path. legate-0ys(b): shared createSessionOnServer helper.
       const dir = resolveDirectory(directory);
       try {
-        const serverUrl = resolveServerUrl(undefined, serverParam);
-        const serverName = serverNameForUrl(serverUrl, serverParam);
-        const c = getClient(serverUrl);
-        const reg2 = readRegistry();
-        const serverEntry2 = reg2.servers.find((s) => s.name === serverName);
-        const model2 = (serverEntry2?.providerID && serverEntry2?.modelID)
-          ? { providerID: serverEntry2.providerID, modelID: serverEntry2.modelID }
-          : undefined;
-        const session = await createSession(c, title, dir, undefined, serverUrl, serverName, model2, serverEntry2?.maxSessions);
+        const { session, client: c } = await createSessionOnServer(ctx, { title, dir, serverParam });
         const { error } = await c.session.promptAsync({
           path: { id: session.id },
           body: {
@@ -319,13 +303,10 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         const msgs = messagesResult.data ?? [];
         const last = [...msgs].reverse().find((m) => (m.info as { role?: string }).role === 'assistant');
         if (!last) throw new Error('legate_await: no assistant message found in session after idle');
-        const awaitParseResult = PartSchema.array().safeParse(last.parts);
-        if (!awaitParseResult.success) {
-          console.error('PartSchema validation warning (legate_await):', awaitParseResult.error.message);
-        }
-        const validatedParts = awaitParseResult.success ? awaitParseResult.data : (last.parts as unknown[]);
+        // legate-ngl: honest per-element validation; partsDropped surfaced only when > 0.
+        const { parts: validatedParts, dropped } = validateParts(last.parts, 'legate_await');
         // D-13: return shape matches legate_delegate for easy substitution
-        return okJson({ result: { info: last.info, parts: validatedParts }, diff });
+        return okJson({ result: { info: last.info, parts: validatedParts, ...(dropped ? { partsDropped: dropped } : {}) }, diff });
       } catch (err) {
         // D-12 stale-session detection — getDiff/status throw OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {

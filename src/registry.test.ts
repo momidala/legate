@@ -5,7 +5,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readRegistry, writeRegistry, addServer, removeServer, _runRegistryMigration } from './registry.js';
+import { readRegistry, writeRegistry, addServer, removeServer, _runRegistryMigration, serverUrl, findServerByName, findServerByUrl, firstServer, isValidServerEntry } from './registry.js';
+import { ServerEntrySchema } from './schemas.js';
 import { countSessionsForServer } from './sessions.js';
 
 function freshTmp(): string {
@@ -265,6 +266,141 @@ test('addServer allows updating a server to the same host:port (same name is not
     );
     const reg = readRegistry(regPath);
     assert.equal(reg.servers[0].modelID, 'qwen3-turbo');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── legate-8jm: URL-format + lookup helpers ─────────────────────────────────
+
+test('legate-8jm: serverUrl formats http://host:port', () => {
+  assert.equal(serverUrl({ host: 'localhost', port: 4096 }), 'http://localhost:4096');
+  assert.equal(serverUrl({ host: '127.0.0.1', port: 5000 }), 'http://127.0.0.1:5000');
+});
+
+test('legate-8jm: findServerByName returns the matching entry or undefined', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    addServer({ name: 'a', host: 'ha', port: 1, providerID: 'vllm', modelID: 'm' }, regPath);
+    addServer({ name: 'b', host: 'hb', port: 2, providerID: 'vllm', modelID: 'm' }, regPath);
+    assert.equal(findServerByName('b', regPath)?.host, 'hb');
+    assert.equal(findServerByName('nope', regPath), undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legate-8jm: findServerByUrl matches on the canonical http://host:port', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    addServer({ name: 'a', host: 'ha', port: 4096, providerID: 'vllm', modelID: 'm' }, regPath);
+    assert.equal(findServerByUrl('http://ha:4096', regPath)?.name, 'a');
+    assert.equal(findServerByUrl('http://ha:9999', regPath), undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legate-8jm: firstServer returns the first entry or undefined when empty', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    assert.equal(firstServer(regPath), undefined);
+    addServer({ name: 'a', host: 'ha', port: 1, providerID: 'vllm', modelID: 'm' }, regPath);
+    addServer({ name: 'b', host: 'hb', port: 2, providerID: 'vllm', modelID: 'm' }, regPath);
+    assert.equal(firstServer(regPath)?.name, 'a');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── legate-8jm: readRegistry entry validation (skip-on-malformed) ────────────
+
+function captureStderr<T>(fn: () => T): { result: T; stderr: string } {
+  const original = console.error;
+  let stderr = '';
+  console.error = (...args: unknown[]) => { stderr += args.map(String).join(' ') + '\n'; };
+  try {
+    return { result: fn(), stderr };
+  } finally {
+    console.error = original;
+  }
+}
+
+test('legate-8jm: readRegistry skips a malformed entry (bad port) and keeps valid ones', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    // Hand-edited registry: one good entry, one with a string port (invalid).
+    writeFileSync(regPath, JSON.stringify({
+      servers: [
+        { name: 'good', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'm' },
+        { name: 'bad', host: 'localhost', port: 'not-a-number', providerID: 'vllm', modelID: 'm' },
+      ],
+    }, null, 2) + '\n');
+    const { result, stderr } = captureStderr(() => readRegistry(regPath));
+    assert.equal(result.servers.length, 1, 'only the valid entry should survive');
+    assert.equal(result.servers[0].name, 'good');
+    assert.ok(stderr.includes('Skipping malformed registry entry'), `should warn: ${stderr}`);
+    assert.ok(stderr.includes('bad'), `warning should name the bad entry: ${stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legate-8jm: readRegistry skips an entry missing name/host and reports (unnamed)', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    writeFileSync(regPath, JSON.stringify({
+      servers: [
+        { host: 'localhost', port: 4096 }, // no name
+        { name: 'ok', host: 'localhost', port: 4097, providerID: 'vllm', modelID: 'm' },
+      ],
+    }, null, 2) + '\n');
+    const { result, stderr } = captureStderr(() => readRegistry(regPath));
+    assert.equal(result.servers.length, 1);
+    assert.equal(result.servers[0].name, 'ok');
+    assert.ok(stderr.includes('(unnamed)'), `nameless entry should be reported as (unnamed): ${stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legate-8jm: readRegistry keeps sparse-but-routable entries (no providerID/modelID)', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    // Only routing fields present — must still be usable (providerID/modelID are lenient).
+    writeFileSync(regPath, JSON.stringify({
+      servers: [{ name: 'sparse', host: 'localhost', port: 4096 }],
+    }, null, 2) + '\n');
+    const reg = readRegistry(regPath);
+    assert.equal(reg.servers.length, 1);
+    assert.equal(reg.servers[0].name, 'sparse');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legate-8jm: isValidServerEntry (guard) agrees with ServerEntrySchema (zod mirror)', () => {
+  const cases: unknown[] = [
+    { name: 'a', host: 'h', port: 4096, providerID: 'vllm', modelID: 'm' }, // valid full
+    { name: 'a', host: 'h', port: 4096 },                                    // valid sparse
+    { name: 'a', host: 'h', port: 4096, maxSessions: 3 },                    // valid capped
+    { name: '', host: 'h', port: 4096 },                                     // empty name
+    { name: 'a', host: '', port: 4096 },                                     // empty host
+    { name: 'a', host: 'h', port: 'x' },                                     // non-number port
+    { name: 'a', host: 'h', port: 0 },                                       // non-positive port
+    { name: 'a', host: 'h', port: 4096.5 },                                  // non-integer port
+    { name: 'a', host: 'h', port: 4096, providerID: 5 },                     // wrong providerID type
+    { host: 'h', port: 4096 },                                              // missing name
+    null,
+    'not-an-object',
+  ];
+  for (const c of cases) {
+    assert.equal(
+      isValidServerEntry(c),
+      ServerEntrySchema.safeParse(c).success,
+      `guard and zod schema must agree for ${JSON.stringify(c)}`,
+    );
+  }
+});
+
+test('legate-8jm: readRegistry still throws on a totally malformed top-level shape', () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'servers.json');
+    writeFileSync(regPath, JSON.stringify({ notServers: 1 }) + '\n');
+    assert.throws(() => readRegistry(regPath), /malformed registry|could not parse/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

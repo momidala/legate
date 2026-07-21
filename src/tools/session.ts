@@ -9,7 +9,11 @@ import type { ServerContext } from '../server-context.js';
 import { resolveDirectory } from '../config.js';
 import { readSessionMap, removeSession } from '../sessions.js';
 import { apiError } from '../errors.js';
-import { PartSchema } from '../parts.js';
+import { validateParts } from '../parts.js';
+// legate-o1u: the real session_command input schema (shared home, imported by the test too).
+import { SessionCommandInputSchema } from '../schemas.js';
+// legate-ur1: response-size cap for legate_session_messages.
+import { capMessagesResponse, maxResponseChars } from '../response-cap.js';
 
 export function registerSession(server: McpServer, ctx: ServerContext): void {
   const {
@@ -94,7 +98,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
   registerSessionTool(
     'legate_session_messages',
     {
-      description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages.',
+      description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), the oldest messages are dropped and the result becomes { truncated: true, omittedMessages: n, messages: [...] }.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         limit: z.number().int().positive().optional().describe(
@@ -110,7 +114,8 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         query: { ...(limit !== undefined ? { limit } : {}), ...(dir ? { directory: dir } : {}) },
       });
       if (error) handleNotFound(error, sessionId, serverUrl);
-      return data;
+      // legate-ur1: cap the payload so a long history cannot blow the MCP client's context.
+      return capMessagesResponse((data ?? []) as unknown[], maxResponseChars());
     }
   );
 
@@ -244,18 +249,9 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
     {
       description:
         'Run a slash command inside an OpenCode session (e.g. compact, clear). Returns { info: AssistantMessage, parts: Part[] } as JSON. Use this for session-level operations that have no equivalent SDK method.',
-      inputSchema: z.object({
-        sessionId: z.string().min(1).describe('Session ID'),
-        command: z.string().describe('The slash command name without the leading slash (e.g. "compact")'),
-        arguments: z.string().describe('Arguments string to pass to the command (use empty string if none)'),
-        messageID: z.string().optional().describe('Optional message ID for context'),
-        agent: z.string().optional().describe('Optional agent override'),
-        model: z
-          .string()
-          .optional()
-          .describe('Optional model override as a plain string (NOT { providerID, modelID } — this endpoint takes a single string).'),
-        directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
-      }),
+      // legate-o1u: the ONE definition of this schema lives in ../schemas.ts (also imported
+      // by session-command.test.ts, replacing its former phantom local copy).
+      inputSchema: SessionCommandInputSchema,
     },
     async ({ client, serverUrl, dir, args }) => {
       const { sessionId, command, arguments: cmdArgs, messageID, agent, model } = args;
@@ -272,12 +268,9 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       });
       if (error) handleNotFound(error, sessionId, serverUrl);
       if (!data) throw new Error('Session command returned no data');
-      const cmdParseResult = PartSchema.array().safeParse((data as { parts?: unknown }).parts);
-      if (!cmdParseResult.success) {
-        console.error('PartSchema validation warning (legate_session_command):', cmdParseResult.error.message);
-      }
-      const cmdParts = cmdParseResult.success ? cmdParseResult.data : (data as { parts?: unknown }).parts;
-      return { info: (data as { info?: unknown }).info, parts: cmdParts };
+      // legate-ngl: honest per-element validation; partsDropped surfaced only when > 0.
+      const { parts: cmdParts, dropped } = validateParts((data as { parts?: unknown }).parts, 'legate_session_command');
+      return { info: (data as { info?: unknown }).info, parts: cmdParts, ...(dropped ? { partsDropped: dropped } : {}) };
     }
   );
 

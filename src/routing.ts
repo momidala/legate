@@ -6,7 +6,8 @@
 // temp sessions.json/servers.json files, WITHOUT changing behavior: index.ts keeps
 // a thin resolveServerUrl(sessionId, serverName) wrapper that supplies BASE_URL.
 import { lookupSession, SESSIONS_PATH } from './sessions.js';
-import { readRegistry, REGISTRY_PATH } from './registry.js';
+// legate-8jm: routing formats no URLs itself — findServerByName/firstServer/serverUrl own that.
+import { findServerByName, firstServer, serverUrl, REGISTRY_PATH } from './registry.js';
 
 // D-06: server URL resolution fallback chain.
 //   1. sessionId → sessions.json lookup → that session's server URL
@@ -32,19 +33,15 @@ export function resolveServerUrl(
     );
   }
   if (serverName) {
-    const reg = readRegistry(registryPath);
-    const found = reg.servers.find((s) => s.name === serverName);
+    const found = findServerByName(serverName, registryPath);
     if (!found) {
       throw new Error(
         `Server '${serverName}' not found in registry. Run 'legate list-servers' to see registered servers.`,
       );
     }
-    return `http://${found.host}:${found.port}`;
+    return serverUrl(found);
   }
-  const reg = readRegistry(registryPath);
-  if (reg.servers.length > 0) {
-    const s = reg.servers[0];
-    return `http://${s.host}:${s.port}`;
-  }
+  const first = firstServer(registryPath);
+  if (first) return serverUrl(first);
   return baseUrl;
 }

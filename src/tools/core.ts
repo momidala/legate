@@ -6,14 +6,19 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ServerContext } from '../server-context.js';
 import { resolveDirectory } from '../config.js';
-import { createSession, runPrompt, getDiff } from '../handlers.js';
-import { readRegistry } from '../registry.js';
+import { createSessionOnServer, runPrompt, getDiff } from '../handlers.js';
+// legate-8jm: aliased to avoid shadowing the `serverUrl` string arg in several handlers.
+import { readRegistry, findServerByName, serverUrl as toServerUrl } from '../registry.js';
 import { addSession, lookupSession, removeSession } from '../sessions.js';
 import { apiError, OpenCodeApiError, isNotFound } from '../errors.js';
+// legate-0ys(a): shared prompt-override schema fields + agent/agentInput XOR refine.
+import { promptOverrideFields, agentXorRefineCheck, agentXorRefineMessage } from '../schemas.js';
+// legate-ur1: response-size cap for legate_get_diff.
+import { capDiffResponse, maxResponseChars } from '../response-cap.js';
 
 export function registerCore(server: McpServer, ctx: ServerContext): void {
   const {
-    BASE_URL, TIMEOUT_MS, getClient, resolveServerUrl, serverNameForUrl,
+    BASE_URL, TIMEOUT_MS, getClient, resolveServerUrl,
     okJson, okText, errText, staleSessionMessage, handleNotFound, staleErrorResponse,
     registerSessionTool,
   } = ctx;
@@ -35,14 +40,8 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
     async ({ title, parentID, directory, server: serverParam }) => {
       const dir = resolveDirectory(directory);
       try {
-        const serverUrl = resolveServerUrl(undefined, serverParam);
-        const serverName = serverNameForUrl(serverUrl, serverParam);
-        const reg = readRegistry();
-        const serverEntry = reg.servers.find((s) => s.name === serverName);
-        const model = (serverEntry?.providerID && serverEntry?.modelID)
-          ? { providerID: serverEntry.providerID, modelID: serverEntry.modelID }
-          : undefined;
-        const session = await createSession(getClient(serverUrl), title, dir, parentID, serverUrl, serverName, model, serverEntry?.maxSessions);
+        // legate-0ys(b): resolve-server → model-lookup → createSession is now one helper.
+        const { session } = await createSessionOnServer(ctx, { title, dir, parentID, serverParam });
         return okJson(session);
       } catch (err) {
         return errText(err);
@@ -91,20 +90,21 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
 
         // Zombie fallback: session not in sessions.json (context reset / crash scenario).
         // Try the specified server, or fan out to every registered server.
+        // legate-8jm: findServerByName + serverUrl() replace the inline find + concatenation.
         const reg = readRegistry();
         type Target = { name: string; url: string };
         let targets: Target[];
         if (serverParam) {
-          const found = reg.servers.find((s) => s.name === serverParam);
+          const found = findServerByName(serverParam);
           if (!found) {
             throw new Error(
               `Server '${serverParam}' not found in registry. Run 'legate list-servers' to see registered servers.`,
             );
           }
-          targets = [{ name: found.name, url: `http://${found.host}:${found.port}` }];
+          targets = [{ name: found.name, url: toServerUrl(found) }];
         } else {
           targets = reg.servers.length > 0
-            ? reg.servers.map((s) => ({ name: s.name, url: `http://${s.host}:${s.port}` }))
+            ? reg.servers.map((s) => ({ name: s.name, url: toServerUrl(s) }))
             : [{ name: 'default', url: BASE_URL }];
         }
 
@@ -148,57 +148,14 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
     {
       description:
         'Send a prompt to an OpenCode session and block until the agent finishes. Returns { info: AssistantMessage, parts: Part[] } as JSON. Optional model/agent/system override the session defaults for this single call. May take seconds to minutes depending on task complexity.',
+      // legate-0ys(a): the 8 override fields + the agent/agentInput XOR refine are shared
+      // with legate_prompt_async via ../schemas.ts (spread + refine — one definition).
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
         prompt: z.string().describe('The coding task or instruction to send'),
         directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
-        // RUN-01: model override — both providerID AND modelID required together
-        model: z
-          .object({
-            providerID: z.string(),
-            modelID: z.string(),
-          })
-          .optional()
-          .describe('Override the model for this single call. Both providerID and modelID are required together.'),
-        // RUN-02: agent override
-        agent: z.string().optional().describe('Override the agent for this single call.'),
-        // RUN-03: system prompt override
-        system: z.string().optional().describe('Override the system prompt for this single call.'),
-        // RUN-05: tools override — CRITICAL: record (Map<string, boolean>), NOT array of strings
-        tools: z.record(z.string(), z.boolean()).optional()
-          .describe('Override enabled tools for this call. Map of tool ID to boolean enable/disable flag. Example: { "bash": true, "edit": false }'),
-        // RUN-06: file attachments — FilePartInput shape (use file:// URIs for local files)
-        files: z.array(z.object({
-          type: z.literal('file'),
-          mime: z.string(),
-          filename: z.string().optional(),
-          url: z.string().refine(
-            (u) => u.startsWith('file://'),
-            { message: 'files[].url must be a file:// URI' }
-          ),
-        })).optional()
-          .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
-        // RUN-07: message ID assignment (idempotency key for user message creation)
-        messageID: z.string().optional()
-          .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.'),
-        // RUN-08: structured agent part input (distinct from the top-level agent string override)
-        agentInput: z.object({
-          type: z.literal('agent'),
-          name: z.string(),
-        }).optional()
-          .describe('Structured agent part input — specify the agent name for this prompt. Distinct from the top-level agent string override.'),
-        // RUN-08: structured subtask part input
-        subtaskInput: z.object({
-          type: z.literal('subtask'),
-          prompt: z.string(),
-          description: z.string(),
-          agent: z.string(),
-        }).optional()
-          .describe('Structured subtask part input — delegate a subtask to a specific agent.'),
-      }).refine(
-        (v) => !(v.agent && v.agentInput),
-        { message: 'Provide either agent or agentInput, not both — they are mutually exclusive overrides' }
-      ),
+        ...promptOverrideFields,
+      }).refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
     },
     async ({ sessionId, prompt, directory, model, agent, system, tools, files, messageID, agentInput, subtaskInput }) => {
       const dir = resolveDirectory(directory);
@@ -248,54 +205,13 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
     {
       description:
         'Send a prompt to an OpenCode session and return immediately without waiting for the agent to finish. Returns { sessionId, accepted: true } on success. Use legate_session_status to poll for completion, then legate_session_messages or legate_get_diff to retrieve results.',
+      // legate-0ys(a): identical override fields + refine as legate_run, shared via ../schemas.ts.
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
         prompt: z.string().describe('The coding task or instruction to send'),
         directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
-        model: z
-          .object({
-            providerID: z.string(),
-            modelID: z.string(),
-          })
-          .optional()
-          .describe('Override the model for this single call. Both providerID and modelID are required together.'),
-        agent: z.string().optional().describe('Override the agent for this single call.'),
-        system: z.string().optional().describe('Override the system prompt for this single call.'),
-        // RUN-05: tools override — CRITICAL: record (Map<string, boolean>), NOT array of strings
-        tools: z.record(z.string(), z.boolean()).optional()
-          .describe('Override enabled tools for this call. Map of tool ID to boolean enable/disable flag. Example: { "bash": true, "edit": false }'),
-        // RUN-06: file attachments — FilePartInput shape (use file:// URIs for local files)
-        files: z.array(z.object({
-          type: z.literal('file'),
-          mime: z.string(),
-          filename: z.string().optional(),
-          url: z.string().refine(
-            (u) => u.startsWith('file://'),
-            { message: 'files[].url must be a file:// URI' }
-          ),
-        })).optional()
-          .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
-        // RUN-07: message ID assignment (idempotency key for user message creation)
-        messageID: z.string().optional()
-          .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.'),
-        // RUN-08: structured agent part input (distinct from the top-level agent string override)
-        agentInput: z.object({
-          type: z.literal('agent'),
-          name: z.string(),
-        }).optional()
-          .describe('Structured agent part input — specify the agent name for this prompt. Distinct from the top-level agent string override.'),
-        // RUN-08: structured subtask part input
-        subtaskInput: z.object({
-          type: z.literal('subtask'),
-          prompt: z.string(),
-          description: z.string(),
-          agent: z.string(),
-        }).optional()
-          .describe('Structured subtask part input — delegate a subtask to a specific agent.'),
-      }).refine(
-        (v) => !(v.agent && v.agentInput),
-        { message: 'Provide either agent or agentInput, not both — they are mutually exclusive overrides' }
-      ),
+        ...promptOverrideFields,
+      }).refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
     },
     async ({ client, serverUrl, dir, args }) => {
       const { sessionId, prompt, model, agent, system, tools, files, messageID, agentInput, subtaskInput } = args;
@@ -325,7 +241,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
   server.registerTool(
     'legate_get_diff',
     {
-      description: 'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session.',
+      description: 'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), it is capped: before/after content is dropped and patch strings are truncated, and the result becomes { truncated: true, files: [...] }.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         messageID: z.string().optional().describe('Optional message ID to scope the diff to a single message'),
@@ -337,7 +253,8 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       try {
         const serverUrl = resolveServerUrl(sessionId);
         const diffs = await getDiff(getClient(serverUrl), sessionId, messageID, dir);
-        return okJson(diffs);
+        // legate-ur1: cap the payload so a huge diff cannot blow the MCP client's context.
+        return okJson(capDiffResponse(diffs, maxResponseChars()));
       } catch (err) {
         // D-12 stale-session detection — getDiff throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
