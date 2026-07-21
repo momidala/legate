@@ -21,9 +21,8 @@ import { resolveEnv } from './env.js';
 export function resolveDirectory(perToolParam: string | undefined): string | undefined {
   return (
     perToolParam ??
-    resolveEnv(
-      ['LEGATE_DEFAULT_PROJECT', 'PREFECT_DEFAULT_PROJECT', 'OPENCODE_DEFAULT_PROJECT'],
-      { quietEmptyWarn: true },
-    )
+    resolveEnv(['LEGATE_DEFAULT_PROJECT', 'PREFECT_DEFAULT_PROJECT', 'OPENCODE_DEFAULT_PROJECT'], {
+      quietEmptyWarn: true,
+    })
   );
 }

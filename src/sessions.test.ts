@@ -4,7 +4,15 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { lock } from 'proper-lockfile';
-import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _runMigration } from './sessions.js';
+import {
+  readSessionMap,
+  writeSessionMap,
+  addSession,
+  removeSession,
+  lookupSession,
+  atomicCheckAndAdd,
+  _runMigration,
+} from './sessions.js';
 // legate-4ah: _resetWarnFlags lives in env.ts — sessions.ts no longer re-exports it.
 import { _resetWarnFlags } from './env.js';
 // legate-4ah: shared try/finally helpers — see testutil.ts for rationale.
@@ -35,13 +43,13 @@ test('writeSessionMap creates parent directory and writes pretty-printed JSON wi
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'nested', 'subdir', 'sessions.json');
-    writeSessionMap({ sessions: { 'ses_abc123': { server: 'local', url: 'http://localhost:4096' } } }, regPath);
+    writeSessionMap({ sessions: { ses_abc123: { server: 'local', url: 'http://localhost:4096' } } }, regPath);
     assert.equal(existsSync(regPath), true);
     const raw = readFileSync(regPath, 'utf8');
     assert.ok(raw.endsWith('\n'), 'file should end with newline');
     assert.ok(raw.includes('  "sessions"'), 'file should use 2-space indent');
     const parsed = JSON.parse(raw);
-    assert.deepEqual(parsed, { sessions: { 'ses_abc123': { server: 'local', url: 'http://localhost:4096' } } });
+    assert.deepEqual(parsed, { sessions: { ses_abc123: { server: 'local', url: 'http://localhost:4096' } } });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -136,7 +144,11 @@ test('addSession stores model when provided and lookupSession returns it', async
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096', model: { providerID: 'vllm', modelID: 'qwen3' } }, regPath);
+    await addSession(
+      'ses_abc123',
+      { server: 'local', url: 'http://localhost:4096', model: { providerID: 'vllm', modelID: 'qwen3' } },
+      regPath,
+    );
     const entry = lookupSession('ses_abc123', regPath);
     assert.deepEqual(entry?.model, { providerID: 'vllm', modelID: 'qwen3' });
   } finally {
@@ -176,12 +188,15 @@ test('readSessionMap prunes entries older than LEGATE_SESSION_TTL_MS', async () 
   try {
     const regPath = join(dir, 'sessions.json');
     const old = Date.now() - 1000; // 1 second ago
-    writeSessionMap({
-      sessions: {
-        'ses_old': { server: 'local', url: 'http://localhost:4096', createdAt: old },
-        'ses_new': { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          ses_old: { server: 'local', url: 'http://localhost:4096', createdAt: old },
+          ses_new: { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
     // TTL of 500ms — ses_old (1s old) should be pruned, ses_new should survive
     await withEnv({ LEGATE_SESSION_TTL_MS: '500' }, () => {
       const map = readSessionMap(regPath);
@@ -197,11 +212,14 @@ test('readSessionMap keeps legacy entries without createdAt (never expires them)
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    writeSessionMap({
-      sessions: {
-        'ses_legacy': { server: 'local', url: 'http://localhost:4096' }, // no createdAt
+    writeSessionMap(
+      {
+        sessions: {
+          ses_legacy: { server: 'local', url: 'http://localhost:4096' }, // no createdAt
+        },
       },
-    }, regPath);
+      regPath,
+    );
     // 1ms TTL — would prune anything with createdAt
     await withEnv({ LEGATE_SESSION_TTL_MS: '1' }, () => {
       const map = readSessionMap(regPath);
@@ -217,12 +235,15 @@ test('readSessionMap is side-effect free: does NOT rewrite the file when it cont
   try {
     const regPath = join(dir, 'sessions.json');
     const old = Date.now() - 1000; // 1 second ago
-    writeSessionMap({
-      sessions: {
-        'ses_old': { server: 'local', url: 'http://localhost:4096', createdAt: old },
-        'ses_new': { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          ses_old: { server: 'local', url: 'http://localhost:4096', createdAt: old },
+          ses_new: { server: 'local', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
     const before = readFileSync(regPath, 'utf8');
 
     // ses_old (1s old) is expired at this TTL
@@ -235,7 +256,10 @@ test('readSessionMap is side-effect free: does NOT rewrite the file when it cont
       const after = readFileSync(regPath, 'utf8');
       assert.equal(after, before, 'readSessionMap must not rewrite sessions.json on read');
       const rawOnDisk = JSON.parse(after);
-      assert.ok('ses_old' in rawOnDisk.sessions, 'expired entry should still be physically present on disk after a read');
+      assert.ok(
+        'ses_old' in rawOnDisk.sessions,
+        'expired entry should still be physically present on disk after a read',
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -247,33 +271,38 @@ test('atomicCheckAndAdd physically prunes expired entries under the lock (TTL pr
   try {
     const regPath = join(dir, 'sessions.json');
     const old = Date.now() - 1000;
-    writeSessionMap({
-      sessions: {
-        'ses_expired': { server: 'myserver', url: 'http://localhost:4096', createdAt: old },
-        'ses_fresh': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          ses_expired: { server: 'myserver', url: 'http://localhost:4096', createdAt: old },
+          ses_fresh: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
 
     // ses_expired is over TTL; all live — so the only removal is the TTL prune,
     // not a liveness prune.
-    await withEnv({ LEGATE_SESSION_TTL_MS: '500' }, () => withMockedFetch(
-      async () => new Response('{}', { status: 200 }),
-      async () => {
-        const result = await atomicCheckAndAdd(
-          'ses_new',
-          { server: 'myserver', url: 'http://localhost:4096' },
-          null,
-          regPath,
-        );
-        assert.equal(result, undefined, 'should succeed with unlimited capacity');
+    await withEnv({ LEGATE_SESSION_TTL_MS: '500' }, () =>
+      withMockedFetch(
+        async () => new Response('{}', { status: 200 }),
+        async () => {
+          const result = await atomicCheckAndAdd(
+            'ses_new',
+            { server: 'myserver', url: 'http://localhost:4096' },
+            null,
+            regPath,
+          );
+          assert.equal(result, undefined, 'should succeed with unlimited capacity');
 
-        // Read the RAW file (not the filtered readSessionMap) to prove physical removal.
-        const rawOnDisk = JSON.parse(readFileSync(regPath, 'utf8'));
-        assert.ok(!('ses_expired' in rawOnDisk.sessions), 'expired entry should be physically pruned from disk');
-        assert.ok('ses_fresh' in rawOnDisk.sessions, 'fresh entry should remain');
-        assert.ok('ses_new' in rawOnDisk.sessions, 'new entry should be added');
-      },
-    ));
+          // Read the RAW file (not the filtered readSessionMap) to prove physical removal.
+          const rawOnDisk = JSON.parse(readFileSync(regPath, 'utf8'));
+          assert.ok(!('ses_expired' in rawOnDisk.sessions), 'expired entry should be physically pruned from disk');
+          assert.ok('ses_fresh' in rawOnDisk.sessions, 'fresh entry should remain');
+          assert.ok('ses_new' in rawOnDisk.sessions, 'new entry should be added');
+        },
+      ),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -284,38 +313,47 @@ test('atomicCheckAndAdd threads the stored directory into the liveness probe (le
   try {
     const regPath = join(dir, 'sessions.json');
     const projectDir = '/home/user/some project';
-    writeSessionMap({
-      sessions: {
-        // Entry WITH a stored directory — probe must scope to it.
-        'ses_scoped': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now(), directory: projectDir },
-        // Entry WITHOUT a directory — probe must omit the query param (legacy behavior).
-        'ses_default': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          // Entry WITH a stored directory — probe must scope to it.
+          ses_scoped: {
+            server: 'myserver',
+            url: 'http://localhost:4096',
+            createdAt: Date.now(),
+            directory: projectDir,
+          },
+          // Entry WITHOUT a directory — probe must omit the query param (legacy behavior).
+          ses_default: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
 
     const probedUrls: string[] = [];
-    await withMockedFetch(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-      probedUrls.push(url);
-      return new Response('{}', { status: 200 });
-    }, async () => {
-      await atomicCheckAndAdd(
-        'ses_new',
-        { server: 'myserver', url: 'http://localhost:4096' },
-        null,
-        regPath,
-      );
+    await withMockedFetch(
+      async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+        probedUrls.push(url);
+        return new Response('{}', { status: 200 });
+      },
+      async () => {
+        await atomicCheckAndAdd('ses_new', { server: 'myserver', url: 'http://localhost:4096' }, null, regPath);
 
-      const scopedProbe = probedUrls.find((u) => u.includes('ses_scoped'));
-      const defaultProbe = probedUrls.find((u) => u.includes('ses_default'));
-      assert.ok(scopedProbe, 'ses_scoped should have been probed');
-      assert.ok(
-        scopedProbe!.includes(`directory=${encodeURIComponent(projectDir)}`),
-        `scoped probe URL should carry the encoded directory query param, was: ${scopedProbe}`,
-      );
-      assert.ok(defaultProbe, 'ses_default should have been probed');
-      assert.ok(!defaultProbe!.includes('directory='), `default probe URL should NOT carry a directory param, was: ${defaultProbe}`);
-    });
+        const scopedProbe = probedUrls.find((u) => u.includes('ses_scoped'));
+        const defaultProbe = probedUrls.find((u) => u.includes('ses_default'));
+        assert.ok(scopedProbe, 'ses_scoped should have been probed');
+        assert.ok(
+          scopedProbe!.includes(`directory=${encodeURIComponent(projectDir)}`),
+          `scoped probe URL should carry the encoded directory query param, was: ${scopedProbe}`,
+        );
+        assert.ok(defaultProbe, 'ses_default should have been probed');
+        assert.ok(
+          !defaultProbe!.includes('directory='),
+          `default probe URL should NOT carry a directory param, was: ${defaultProbe}`,
+        );
+      },
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -326,34 +364,40 @@ test('atomicCheckAndAdd prunes stale sessions (non-200 liveness) before capacity
   try {
     const regPath = join(dir, 'sessions.json');
     // Pre-populate with two sessions for the same server
-    writeSessionMap({
-      sessions: {
-        'ses_dead': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
-        'ses_alive': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          ses_dead: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+          ses_alive: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
 
     // Mock fetch: ses_dead → 404, ses_alive → 200
-    await withMockedFetch(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-      if (url.includes('ses_dead')) return new Response(null, { status: 404 });
-      if (url.includes('ses_alive')) return new Response('{}', { status: 200 });
-      return new Response('{}', { status: 200 });
-    }, async () => {
-      // maxSessions=2, but ses_dead is pruned → only 1 alive → should succeed
-      const result = await atomicCheckAndAdd(
-        'ses_new',
-        { server: 'myserver', url: 'http://localhost:4096' },
-        2,
-        regPath,
-      );
-      assert.equal(result, undefined, 'should not return capacity error');
+    await withMockedFetch(
+      async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+        if (url.includes('ses_dead')) return new Response(null, { status: 404 });
+        if (url.includes('ses_alive')) return new Response('{}', { status: 200 });
+        return new Response('{}', { status: 200 });
+      },
+      async () => {
+        // maxSessions=2, but ses_dead is pruned → only 1 alive → should succeed
+        const result = await atomicCheckAndAdd(
+          'ses_new',
+          { server: 'myserver', url: 'http://localhost:4096' },
+          2,
+          regPath,
+        );
+        assert.equal(result, undefined, 'should not return capacity error');
 
-      const map = readSessionMap(regPath);
-      assert.ok(!('ses_dead' in map.sessions), 'dead session should be pruned');
-      assert.ok('ses_alive' in map.sessions, 'live session should remain');
-      assert.ok('ses_new' in map.sessions, 'new session should be added');
-    });
+        const map = readSessionMap(regPath);
+        assert.ok(!('ses_dead' in map.sessions), 'dead session should be pruned');
+        assert.ok('ses_alive' in map.sessions, 'live session should remain');
+        assert.ok('ses_new' in map.sessions, 'new session should be added');
+      },
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -363,24 +407,30 @@ test('atomicCheckAndAdd enforces capacity after pruning dead sessions', async ()
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    writeSessionMap({
-      sessions: {
-        'ses_a': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
-        'ses_b': { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+    writeSessionMap(
+      {
+        sessions: {
+          ses_a: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+          ses_b: { server: 'myserver', url: 'http://localhost:4096', createdAt: Date.now() },
+        },
       },
-    }, regPath);
+      regPath,
+    );
 
     // Both sessions are live; maxSessions=2 with 2 live sessions → should be at capacity
-    await withMockedFetch(async () => new Response('{}', { status: 200 }), async () => {
-      const result = await atomicCheckAndAdd(
-        'ses_new',
-        { server: 'myserver', url: 'http://localhost:4096' },
-        2,
-        regPath,
-      );
-      assert.ok(result !== undefined, 'should return capacity error string');
-      assert.ok(result.includes('at capacity'), 'error should mention capacity');
-    });
+    await withMockedFetch(
+      async () => new Response('{}', { status: 200 }),
+      async () => {
+        const result = await atomicCheckAndAdd(
+          'ses_new',
+          { server: 'myserver', url: 'http://localhost:4096' },
+          2,
+          regPath,
+        );
+        assert.ok(result !== undefined, 'should return capacity error string');
+        assert.ok(result.includes('at capacity'), 'error should mention capacity');
+      },
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -395,17 +445,20 @@ test('legate-ayq: concurrent addSession + atomicCheckAndAdd never lose either wr
   try {
     const regPath = join(dir, 'sessions.json');
     // Any liveness probe answers 200 — no session is pruned, so both writes must persist.
-    await withMockedFetch(async () => new Response('{}', { status: 200 }), async () => {
-      // Fire both writers at the same file simultaneously. They contend for the ONE
-      // retrying lock, so serialization — not a lost write — is the only possible outcome.
-      await Promise.all([
-        addSession('ses_add', { server: 'srvA', url: 'http://localhost:4096' }, regPath),
-        atomicCheckAndAdd('ses_atomic', { server: 'srvB', url: 'http://localhost:4097' }, null, regPath),
-      ]);
-      const map = readSessionMap(regPath);
-      assert.ok('ses_add' in map.sessions, 'addSession write must survive concurrent atomicCheckAndAdd');
-      assert.ok('ses_atomic' in map.sessions, 'atomicCheckAndAdd write must survive concurrent addSession');
-    });
+    await withMockedFetch(
+      async () => new Response('{}', { status: 200 }),
+      async () => {
+        // Fire both writers at the same file simultaneously. They contend for the ONE
+        // retrying lock, so serialization — not a lost write — is the only possible outcome.
+        await Promise.all([
+          addSession('ses_add', { server: 'srvA', url: 'http://localhost:4096' }, regPath),
+          atomicCheckAndAdd('ses_atomic', { server: 'srvB', url: 'http://localhost:4097' }, null, regPath),
+        ]);
+        const map = readSessionMap(regPath);
+        assert.ok('ses_add' in map.sessions, 'addSession write must survive concurrent atomicCheckAndAdd');
+        assert.ok('ses_atomic' in map.sessions, 'atomicCheckAndAdd write must survive concurrent addSession');
+      },
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -477,8 +530,15 @@ test('readSessionMap emits one-time deprecation warning for PREFECT_SESSION_TTL_
       const regPath = join(dir, 'sessions.json');
       const { warnings } = await captureWarnings(() => readSessionMap(regPath));
       const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
-      assert.equal(ttlWarnings.length, 1, `expected exactly 1 PREFECT_SESSION_TTL_MS warning, got ${ttlWarnings.length}: ${JSON.stringify(warnings)}`);
-      assert.ok(ttlWarnings[0].includes('LEGATE_SESSION_TTL_MS'), `warning should mention LEGATE_SESSION_TTL_MS: ${ttlWarnings[0]}`);
+      assert.equal(
+        ttlWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SESSION_TTL_MS warning, got ${ttlWarnings.length}: ${JSON.stringify(warnings)}`,
+      );
+      assert.ok(
+        ttlWarnings[0].includes('LEGATE_SESSION_TTL_MS'),
+        `warning should mention LEGATE_SESSION_TTL_MS: ${ttlWarnings[0]}`,
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -496,7 +556,11 @@ test('readSessionMap emits PREFECT_SESSION_TTL_MS warning exactly once when call
         readSessionMap(regPath); // second call — must NOT emit a second warning
       });
       const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
-      assert.equal(ttlWarnings.length, 1, `expected exactly 1 PREFECT_SESSION_TTL_MS warning across 2 calls, got ${ttlWarnings.length}`);
+      assert.equal(
+        ttlWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SESSION_TTL_MS warning across 2 calls, got ${ttlWarnings.length}`,
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -511,7 +575,11 @@ test('readSessionMap emits NO PREFECT_SESSION_TTL_MS warning when LEGATE_SESSION
       const regPath = join(dir, 'sessions.json');
       const { warnings } = await captureWarnings(() => readSessionMap(regPath));
       const ttlWarnings = warnings.filter((w) => w.includes('PREFECT_SESSION_TTL_MS'));
-      assert.equal(ttlWarnings.length, 0, `expected 0 PREFECT_SESSION_TTL_MS warnings when LEGATE_SESSION_TTL_MS is set, got ${ttlWarnings.length}`);
+      assert.equal(
+        ttlWarnings.length,
+        0,
+        `expected 0 PREFECT_SESSION_TTL_MS warnings when LEGATE_SESSION_TTL_MS is set, got ${ttlWarnings.length}`,
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -534,7 +602,10 @@ test('_runMigration copies old dir when target sessions.json absent, even if tar
     // Simulate: old ~/.config/prefect/ with a sessions.json
     const oldDir = join(root, 'prefect');
     mkdirSync(oldDir);
-    writeFileSync(join(oldDir, 'sessions.json'), JSON.stringify({ sessions: { 'ses_old': { server: 'x', url: 'http://localhost:4096' } } }));
+    writeFileSync(
+      join(oldDir, 'sessions.json'),
+      JSON.stringify({ sessions: { ses_old: { server: 'x', url: 'http://localhost:4096' } } }),
+    );
 
     _runMigration(newPath, oldDir);
 
@@ -553,11 +624,17 @@ test('_runMigration skips copy when target sessions.json already exists (migrati
     const newPath = join(newDir, 'sessions.json');
     mkdirSync(newDir);
     // Target sessions.json already present — migration must not overwrite
-    writeFileSync(newPath, JSON.stringify({ sessions: { 'ses_existing': { server: 'y', url: 'http://localhost:4096' } } }));
+    writeFileSync(
+      newPath,
+      JSON.stringify({ sessions: { ses_existing: { server: 'y', url: 'http://localhost:4096' } } }),
+    );
 
     const oldDir = join(root, 'prefect');
     mkdirSync(oldDir);
-    writeFileSync(join(oldDir, 'sessions.json'), JSON.stringify({ sessions: { 'ses_old': { server: 'x', url: 'http://localhost:4096' } } }));
+    writeFileSync(
+      join(oldDir, 'sessions.json'),
+      JSON.stringify({ sessions: { ses_old: { server: 'x', url: 'http://localhost:4096' } } }),
+    );
 
     _runMigration(newPath, oldDir);
 

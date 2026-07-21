@@ -17,16 +17,22 @@ import { capMessagesResponse, maxResponseChars } from '../response-cap.js';
 
 export function registerSession(server: McpServer, ctx: ServerContext): void {
   const {
-    TIMEOUT_MS, getClient, resolveServerUrl,
-    okJson, errText, handleNotFound,
-    registerSessionTool, registerServerTool,
+    TIMEOUT_MS,
+    getClient,
+    resolveServerUrl,
+    okJson,
+    errText,
+    handleNotFound,
+    registerSessionTool,
+    registerServerTool,
   } = ctx;
 
   // SESSION-01: List all OpenCode sessions
   registerServerTool(
     'legate_session_list',
     {
-      description: 'List all OpenCode sessions. Returns an array of Session objects each with id, title, directory, time.created, time.updated, and optional summary/share/revert fields. Pass directory to filter sessions by project root.',
+      description:
+        'List all OpenCode sessions. Returns an array of Session objects each with id, title, directory, time.created, time.updated, and optional summary/share/revert fields. Pass directory to filter sessions by project root.',
       inputSchema: z.object({
         directory: z.string().optional().describe('Filter sessions by project directory path'),
       }),
@@ -37,14 +43,15 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       });
       if (error) throw apiError(error);
       return data;
-    }
+    },
   );
 
   // SESSION-02: Fetch a single OpenCode session by ID
   registerSessionTool(
     'legate_session_get',
     {
-      description: 'Fetch a single OpenCode session by ID. Returns the full Session object including id, title, directory, parentID (if forked), and revert state.',
+      description:
+        'Fetch a single OpenCode session by ID. Returns the full Session object including id, title, directory, parentID (if forked), and revert state.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to fetch'),
         directory: z.string().optional().describe('Optional directory filter'),
@@ -58,7 +65,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-03: Get real-time status of ALL active sessions (global endpoint).
@@ -68,9 +75,15 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
   server.registerTool(
     'legate_session_status',
     {
-      description: 'Get the real-time status of active OpenCode sessions. Returns a map of sessionID → SessionStatus where status is one of: { type: "idle" }, { type: "busy" }, or { type: "retry", attempt, message, next }. Pass sessionId to scope the result to one session and route to the correct server (required when multiple servers are registered).',
+      description:
+        'Get the real-time status of active OpenCode sessions. Returns a map of sessionID → SessionStatus where status is one of: { type: "idle" }, { type: "busy" }, or { type: "retry", attempt, message, next }. Pass sessionId to scope the result to one session and route to the correct server (required when multiple servers are registered).',
       inputSchema: z.object({
-        sessionId: z.string().optional().describe('Optional: scope to a specific session and route to the server that owns it. If omitted, queries the default/first registered server.'),
+        sessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Optional: scope to a specific session and route to the server that owns it. If omitted, queries the default/first registered server.',
+          ),
         directory: z.string().optional().describe('Optional directory filter'),
       }),
     },
@@ -91,19 +104,25 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // SESSION-04: Retrieve message history for a session (limit = most-recent-N, no cursor)
   registerSessionTool(
     'legate_session_messages',
     {
-      description: 'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), the oldest messages are dropped and the result becomes { truncated: true, omittedMessages: n, messages: [...] }.',
+      description:
+        'Retrieve the message history for an OpenCode session. Each message includes an info object (UserMessage or AssistantMessage) and a parts array (TextPart, ToolPart, PatchPart, etc.). Use limit to cap the number of messages returned — this returns the most recent N messages only; there is no cursor or offset. Omit limit to return all messages. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), the oldest messages are dropped and the result becomes { truncated: true, omittedMessages: n, messages: [...] }.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
-        limit: z.number().int().positive().optional().describe(
-          'Maximum number of messages to return. Returns the most recent N messages — there is no offset or cursor. Omit to return all messages.'
-        ),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            'Maximum number of messages to return. Returns the most recent N messages — there is no offset or cursor. Omit to return all messages.',
+          ),
         directory: z.string().optional().describe('Optional directory filter'),
       }),
     },
@@ -116,14 +135,15 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       if (error) await handleNotFound(error, sessionId, serverUrl);
       // legate-ur1: cap the payload so a long history cannot blow the MCP client's context.
       return capMessagesResponse((data ?? []) as unknown[], maxResponseChars());
-    }
+    },
   );
 
   // SESSION-05: Fetch a single message by ID within a session
   registerSessionTool(
     'legate_session_message',
     {
-      description: 'Fetch a single message by ID within an OpenCode session. Returns the message info and all its parts (TextPart, ToolPart, PatchPart, etc.).',
+      description:
+        'Fetch a single message by ID within an OpenCode session. Returns the message info and all its parts (TextPart, ToolPart, PatchPart, etc.).',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         messageId: z.string().describe('Message ID to fetch'),
@@ -133,19 +153,20 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
     async ({ client, serverUrl, dir, args }) => {
       const { sessionId, messageId } = args;
       const { data, error } = await client.session.message({
-        path: { id: sessionId, messageID: messageId },  // SDK path param is messageID (capital D)
+        path: { id: sessionId, messageID: messageId }, // SDK path param is messageID (capital D)
         query: dir ? { directory: dir } : undefined,
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-06: Delete a session permanently (irreversible)
   registerSessionTool(
     'legate_session_delete',
     {
-      description: 'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using legate_session_rename to archive instead of deleting.',
+      description:
+        'Delete an OpenCode session and all its data permanently. Returns true on success. WARNING: this is irreversible — all messages, parts, and session history will be deleted. Consider using legate_session_rename to archive instead of deleting.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to delete'),
         directory: z.string().optional().describe('Optional directory filter'),
@@ -160,7 +181,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       if (error) await handleNotFound(error, sessionId, serverUrl);
       await removeSession(sessionId);
       return data;
-    }
+    },
   );
 
   // SESSION-07: Rename a session — MCP tool is "rename" but SDK method is client.session.update()
@@ -176,23 +197,28 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
     },
     async ({ client, serverUrl, dir, args }) => {
       const { sessionId, title } = args;
-      const { data, error } = await client.session.update({  // NOT client.session.rename — does not exist
+      const { data, error } = await client.session.update({
+        // NOT client.session.rename — does not exist
         path: { id: sessionId },
         body: { title },
         query: dir ? { directory: dir } : undefined,
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-08: List child sessions forked from a parent session
   registerSessionTool(
     'legate_session_children',
     {
-      description: 'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use legate_fork to create child sessions.',
+      description:
+        'List all child sessions forked from a given PARENT session. sessionId must be the parent (the session that was forked FROM, not a child). Returns an empty array if no forks have been made from this session. Use legate_fork to create child sessions.',
       inputSchema: z.object({
-        sessionId: z.string().min(1).describe('Parent session ID — the session that child forks were created from (not a child session ID)'),
+        sessionId: z
+          .string()
+          .min(1)
+          .describe('Parent session ID — the session that child forks were created from (not a child session ID)'),
         directory: z.string().optional().describe('Optional directory filter'),
       }),
     },
@@ -213,14 +239,15 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         .filter(([id, e]) => e.parentId === sessionId && !serverChildIds.has(id))
         .map(([id, e]) => ({ id, server: e.server, url: e.url }));
       return [...serverChildren, ...localChildren];
-    }
+    },
   );
 
   // SESSION-09: Undo a prior revert — NO body (SessionUnrevertData.body is typed never)
   registerSessionTool(
     'legate_session_unrevert',
     {
-      description: 'Restore all messages removed by a prior legate_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
+      description:
+        'Restore all messages removed by a prior legate_revert — undo the revert. Only valid if the session is in a reverted state (Session.revert field is non-null). Returns the updated Session object with the revert field cleared.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to unrevert — must have been previously reverted'),
         directory: z.string().optional().describe('Optional directory filter'),
@@ -235,7 +262,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // CMD-01: Run a slash command inside an OpenCode session (e.g. /compact, /clear).
@@ -270,8 +297,12 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
       if (!data) throw new Error('Session command returned no data');
       // legate-ngl: honest per-element validation; partsDropped surfaced only when > 0.
       const { parts: cmdParts, dropped } = validateParts((data as { parts?: unknown }).parts, 'legate_session_command');
-      return { info: (data as { info?: unknown }).info, parts: cmdParts, ...(dropped ? { partsDropped: dropped } : {}) };
-    }
+      return {
+        info: (data as { info?: unknown }).info,
+        parts: cmdParts,
+        ...(dropped ? { partsDropped: dropped } : {}),
+      };
+    },
   );
 
   // SESSION-13: Generate AGENTS.md for the session's project (with existence guard)
@@ -296,11 +327,27 @@ providerID, modelID, and messageID are all required. messageID is the ID assigne
 WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status), OpenCode will treat it as absent but the model may still skip writing it — interpreting the git-deleted state as an intentional removal. Before calling, ensure AGENTS.md is either committed (present) or fully removed from both the working tree and git index (git rm --cached AGENTS.md && rm AGENTS.md). A file that is deleted on disk but still tracked will confuse the model.`,
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
-        providerID: z.string().describe('Required. Provider ID — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
+        providerID: z
+          .string()
+          .describe(
+            'Required. Provider ID — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.',
+          ),
         modelID: z.string().describe('Required. Model ID. Must be available under the specified providerID.'),
-        messageID: z.string().describe('Required. The ID assigned to the new user message created by this call. Must start with "msg" (e.g. "msg_" + Date.now(), or "msg" + a random suffix). UUID format is rejected. Not a reference to an existing message.'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
-        force: z.boolean().optional().describe('Skip the existence guard and always call the endpoint. OpenCode will rewrite AGENTS.md — custom content can be lost. Use when explicitly re-initializing.'),
+        messageID: z
+          .string()
+          .describe(
+            'Required. The ID assigned to the new user message created by this call. Must start with "msg" (e.g. "msg_" + Date.now(), or "msg" + a random suffix). UUID format is rejected. Not a reference to an existing message.',
+          ),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            'Skip the existence guard and always call the endpoint. OpenCode will rewrite AGENTS.md — custom content can be lost. Use when explicitly re-initializing.',
+          ),
       }),
     },
     async ({ sessionId, providerID, modelID, messageID, directory, force }) => {
@@ -332,25 +379,35 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         if ((err as Error).name === 'AbortError') {
           return errText(
             `legate_session_init timed out after ${TIMEOUT_MS / 1000}s — the OpenCode server did not return a response. ` +
-            `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
-            `Check whether AGENTS.md was created in the project directory anyway.`,
+              `This is a known upstream issue: the /session/{id}/init endpoint may not send a response on some OpenCode versions. ` +
+              `Check whether AGENTS.md was created in the project directory anyway.`,
           );
         }
         return errText(err);
       }
-    }
+    },
   );
 
   // SESSION-11: Trigger session summary generation
   registerSessionTool(
     'legate_session_summarize',
     {
-      description: 'Trigger summary generation for an OpenCode session. Returns true when the summarization was accepted. providerID and modelID are required — the endpoint has no default fallback. providerID must match a provider configured in the OpenCode server (e.g. "vllm" or "anthropic"); using an unconfigured provider returns ProviderModelNotFoundError.',
+      description:
+        'Trigger summary generation for an OpenCode session. Returns true when the summarization was accepted. providerID and modelID are required — the endpoint has no default fallback. providerID must match a provider configured in the OpenCode server (e.g. "vllm" or "anthropic"); using an unconfigured provider returns ProviderModelNotFoundError.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
-        providerID: z.string().describe('Required. Provider ID for summarization — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.'),
-        modelID: z.string().describe('Required. Model ID for summarization. Must be available under the specified providerID.'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        providerID: z
+          .string()
+          .describe(
+            'Required. Provider ID for summarization — must match a provider configured in the OpenCode server (e.g. "vllm"). Using an unconfigured provider returns ProviderModelNotFoundError.',
+          ),
+        modelID: z
+          .string()
+          .describe('Required. Model ID for summarization. Must be available under the specified providerID.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -362,17 +419,21 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-12: Get the current todo list for a session
   registerSessionTool(
     'legate_session_todo',
     {
-      description: 'Get the current todo list for an OpenCode session. Returns Array<{ id, content, status, priority }> where status is one of pending/in_progress/completed/cancelled and priority is high/medium/low.',
+      description:
+        'Get the current todo list for an OpenCode session. Returns Array<{ id, content, status, priority }> where status is one of pending/in_progress/completed/cancelled and priority is high/medium/low.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -383,17 +444,21 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-15: Make a session publicly shareable
   registerSessionTool(
     'legate_session_share',
     {
-      description: 'Make an OpenCode session publicly shareable. Returns the full Session object — after sharing, the share URL is available at session.share.url in the returned Session.',
+      description:
+        'Make an OpenCode session publicly shareable. Returns the full Session object — after sharing, the share URL is available at session.share.url in the returned Session.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to share'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -404,17 +469,21 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // SESSION-16: Remove sharing from a session
   registerSessionTool(
     'legate_session_unshare',
     {
-      description: 'Remove public sharing from an OpenCode session. Returns the updated Session object with the share field cleared (session.share will be absent/undefined).',
+      description:
+        'Remove public sharing from an OpenCode session. Returns the updated Session object with the share field cleared (session.share will be absent/undefined).',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to unshare'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -425,6 +494,6 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 }

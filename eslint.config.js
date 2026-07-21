@@ -22,10 +22,7 @@ export default tseslint.config(
       // Codebase leans on `_prefixed` params/vars to mark intentionally-unused
       // bindings (e.g. destructured but unused callback args); allow that
       // convention instead of flagging every one.
-      '@typescript-eslint/no-unused-vars': [
-        'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
-      ],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
   eslintConfigPrettier,

@@ -28,7 +28,9 @@ import { registerSession } from './tools/session.js';
 import { registerDiscovery } from './tools/discovery.js';
 import { runStartupMigrations } from './startup.js';
 
-const packageVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
 
 // legate-hry: build a fully-registered server plus its context. createServer() below
 // exposes only the McpServer for tests; main() also needs ctx for the startup banner.

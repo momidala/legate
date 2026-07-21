@@ -3,13 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  buildAuthHeader,
-  authFetch,
-  _resetWarnFlags,
-  _isTrustedHost,
-  _setRegistryPathForTest,
-} from './auth.js';
+import { buildAuthHeader, authFetch, _resetWarnFlags, _isTrustedHost, _setRegistryPathForTest } from './auth.js';
 // legate-4ah: shared try/finally helpers — see testutil.ts for rationale.
 import { withEnv, withMockedFetch, captureWarnings } from './testutil.js';
 
@@ -48,32 +42,38 @@ test('buildAuthHeader uses LEGATE_SERVER_USERNAME when provided', async () => {
 test('authFetch forwards request unchanged when no password set', async () => {
   await withEnv({ LEGATE_SERVER_PASSWORD: undefined, LEGATE_SERVER_USERNAME: undefined }, async () => {
     let capturedRequest: Request | undefined;
-    await withMockedFetch((req: Request) => {
-      capturedRequest = req;
-      return Promise.resolve(new Response('ok'));
-    }, async () => {
-      const req = new Request('http://localhost:4096/test');
-      await authFetch(req);
-      assert.ok(capturedRequest !== undefined, 'fetch should have been called');
-      assert.equal(capturedRequest!.url, 'http://localhost:4096/test');
-      assert.equal(capturedRequest!.headers.get('Authorization'), null);
-    });
+    await withMockedFetch(
+      (req: Request) => {
+        capturedRequest = req;
+        return Promise.resolve(new Response('ok'));
+      },
+      async () => {
+        const req = new Request('http://localhost:4096/test');
+        await authFetch(req);
+        assert.ok(capturedRequest !== undefined, 'fetch should have been called');
+        assert.equal(capturedRequest!.url, 'http://localhost:4096/test');
+        assert.equal(capturedRequest!.headers.get('Authorization'), null);
+      },
+    );
   });
 });
 
 test('authFetch injects Authorization header when LEGATE_SERVER_PASSWORD is set', async () => {
   await withEnv({ LEGATE_SERVER_PASSWORD: 'secret', LEGATE_SERVER_USERNAME: undefined }, async () => {
     let capturedRequest: Request | undefined;
-    await withMockedFetch((req: Request) => {
-      capturedRequest = req;
-      return Promise.resolve(new Response('ok'));
-    }, async () => {
-      const req = new Request('http://localhost:4096/test');
-      await authFetch(req);
-      assert.ok(capturedRequest !== undefined, 'fetch should have been called');
-      const expected = `Basic ${Buffer.from('opencode:secret').toString('base64')}`;
-      assert.equal(capturedRequest!.headers.get('Authorization'), expected);
-    });
+    await withMockedFetch(
+      (req: Request) => {
+        capturedRequest = req;
+        return Promise.resolve(new Response('ok'));
+      },
+      async () => {
+        const req = new Request('http://localhost:4096/test');
+        await authFetch(req);
+        assert.ok(capturedRequest !== undefined, 'fetch should have been called');
+        const expected = `Basic ${Buffer.from('opencode:secret').toString('base64')}`;
+        assert.equal(capturedRequest!.headers.get('Authorization'), expected);
+      },
+    );
   });
 });
 
@@ -86,99 +86,147 @@ test('authFetch injects Authorization header when LEGATE_SERVER_PASSWORD is set'
 // Warning text Plan 02 will emit: '[Legate] PREFECT_SERVER_PASSWORD is deprecated, use LEGATE_SERVER_PASSWORD'
 test('buildAuthHeader emits one-time deprecation warning for PREFECT_SERVER_PASSWORD when LEGATE_SERVER_PASSWORD is not set', async () => {
   _resetWarnFlags();
-  await withEnv({
-    LEGATE_SERVER_PASSWORD: undefined,
-    PREFECT_SERVER_PASSWORD: 'legacy-pw',
-    OPENCODE_SERVER_PASSWORD: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => buildAuthHeader());
-    const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
-    assert.equal(pwWarnings.length, 1, `expected exactly 1 PREFECT_SERVER_PASSWORD warning, got ${pwWarnings.length}: ${JSON.stringify(warnings)}`);
-    assert.ok(pwWarnings[0].includes('LEGATE_SERVER_PASSWORD'), `warning should mention LEGATE_SERVER_PASSWORD: ${pwWarnings[0]}`);
-  });
+  await withEnv(
+    {
+      LEGATE_SERVER_PASSWORD: undefined,
+      PREFECT_SERVER_PASSWORD: 'legacy-pw',
+      OPENCODE_SERVER_PASSWORD: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => buildAuthHeader());
+      const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
+      assert.equal(
+        pwWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SERVER_PASSWORD warning, got ${pwWarnings.length}: ${JSON.stringify(warnings)}`,
+      );
+      assert.ok(
+        pwWarnings[0].includes('LEGATE_SERVER_PASSWORD'),
+        `warning should mention LEGATE_SERVER_PASSWORD: ${pwWarnings[0]}`,
+      );
+    },
+  );
 });
 
 test('buildAuthHeader emits PREFECT_SERVER_PASSWORD warning exactly once when called twice (one-time-per-process guard)', async () => {
   _resetWarnFlags();
-  await withEnv({
-    LEGATE_SERVER_PASSWORD: undefined,
-    PREFECT_SERVER_PASSWORD: 'legacy-pw',
-    OPENCODE_SERVER_PASSWORD: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => {
-      buildAuthHeader();
-      buildAuthHeader(); // second call — must NOT emit a second warning
-    });
-    const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
-    assert.equal(pwWarnings.length, 1, `expected exactly 1 PREFECT_SERVER_PASSWORD warning across 2 calls, got ${pwWarnings.length}`);
-  });
+  await withEnv(
+    {
+      LEGATE_SERVER_PASSWORD: undefined,
+      PREFECT_SERVER_PASSWORD: 'legacy-pw',
+      OPENCODE_SERVER_PASSWORD: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => {
+        buildAuthHeader();
+        buildAuthHeader(); // second call — must NOT emit a second warning
+      });
+      const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
+      assert.equal(
+        pwWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SERVER_PASSWORD warning across 2 calls, got ${pwWarnings.length}`,
+      );
+    },
+  );
 });
 
 test('buildAuthHeader emits NO PREFECT_SERVER_PASSWORD warning when LEGATE_SERVER_PASSWORD is also set (LEGATE_* takes precedence)', async () => {
   _resetWarnFlags();
-  await withEnv({
-    LEGATE_SERVER_PASSWORD: 'new-pw',
-    PREFECT_SERVER_PASSWORD: 'old-pw',
-    OPENCODE_SERVER_PASSWORD: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => buildAuthHeader());
-    const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
-    assert.equal(pwWarnings.length, 0, `expected 0 PREFECT_SERVER_PASSWORD warnings when LEGATE_SERVER_PASSWORD is set, got ${pwWarnings.length}`);
-  });
+  await withEnv(
+    {
+      LEGATE_SERVER_PASSWORD: 'new-pw',
+      PREFECT_SERVER_PASSWORD: 'old-pw',
+      OPENCODE_SERVER_PASSWORD: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => buildAuthHeader());
+      const pwWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_PASSWORD'));
+      assert.equal(
+        pwWarnings.length,
+        0,
+        `expected 0 PREFECT_SERVER_PASSWORD warnings when LEGATE_SERVER_PASSWORD is set, got ${pwWarnings.length}`,
+      );
+    },
+  );
 });
 
 // Warning text Plan 02 will emit: '[Legate] PREFECT_SERVER_USERNAME is deprecated, use LEGATE_SERVER_USERNAME'
 test('buildAuthHeader emits one-time deprecation warning for PREFECT_SERVER_USERNAME when LEGATE_SERVER_USERNAME is not set', async () => {
   _resetWarnFlags();
-  await withEnv({
-    // Need a password set so username resolution is reached
-    LEGATE_SERVER_PASSWORD: 'pw',
-    PREFECT_SERVER_PASSWORD: undefined,
-    OPENCODE_SERVER_PASSWORD: undefined,
-    LEGATE_SERVER_USERNAME: undefined,
-    PREFECT_SERVER_USERNAME: 'legacy-user',
-    OPENCODE_SERVER_USERNAME: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => buildAuthHeader());
-    const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
-    assert.equal(userWarnings.length, 1, `expected exactly 1 PREFECT_SERVER_USERNAME warning, got ${userWarnings.length}: ${JSON.stringify(warnings)}`);
-    assert.ok(userWarnings[0].includes('LEGATE_SERVER_USERNAME'), `warning should mention LEGATE_SERVER_USERNAME: ${userWarnings[0]}`);
-  });
+  await withEnv(
+    {
+      // Need a password set so username resolution is reached
+      LEGATE_SERVER_PASSWORD: 'pw',
+      PREFECT_SERVER_PASSWORD: undefined,
+      OPENCODE_SERVER_PASSWORD: undefined,
+      LEGATE_SERVER_USERNAME: undefined,
+      PREFECT_SERVER_USERNAME: 'legacy-user',
+      OPENCODE_SERVER_USERNAME: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => buildAuthHeader());
+      const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
+      assert.equal(
+        userWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SERVER_USERNAME warning, got ${userWarnings.length}: ${JSON.stringify(warnings)}`,
+      );
+      assert.ok(
+        userWarnings[0].includes('LEGATE_SERVER_USERNAME'),
+        `warning should mention LEGATE_SERVER_USERNAME: ${userWarnings[0]}`,
+      );
+    },
+  );
 });
 
 test('buildAuthHeader emits PREFECT_SERVER_USERNAME warning exactly once when called twice (one-time-per-process guard)', async () => {
   _resetWarnFlags();
-  await withEnv({
-    LEGATE_SERVER_PASSWORD: 'pw',
-    PREFECT_SERVER_PASSWORD: undefined,
-    OPENCODE_SERVER_PASSWORD: undefined,
-    LEGATE_SERVER_USERNAME: undefined,
-    PREFECT_SERVER_USERNAME: 'legacy-user',
-    OPENCODE_SERVER_USERNAME: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => {
-      buildAuthHeader();
-      buildAuthHeader(); // second call — must NOT emit a second warning
-    });
-    const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
-    assert.equal(userWarnings.length, 1, `expected exactly 1 PREFECT_SERVER_USERNAME warning across 2 calls, got ${userWarnings.length}`);
-  });
+  await withEnv(
+    {
+      LEGATE_SERVER_PASSWORD: 'pw',
+      PREFECT_SERVER_PASSWORD: undefined,
+      OPENCODE_SERVER_PASSWORD: undefined,
+      LEGATE_SERVER_USERNAME: undefined,
+      PREFECT_SERVER_USERNAME: 'legacy-user',
+      OPENCODE_SERVER_USERNAME: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => {
+        buildAuthHeader();
+        buildAuthHeader(); // second call — must NOT emit a second warning
+      });
+      const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
+      assert.equal(
+        userWarnings.length,
+        1,
+        `expected exactly 1 PREFECT_SERVER_USERNAME warning across 2 calls, got ${userWarnings.length}`,
+      );
+    },
+  );
 });
 
 test('buildAuthHeader emits NO PREFECT_SERVER_USERNAME warning when LEGATE_SERVER_USERNAME is also set (LEGATE_* takes precedence)', async () => {
   _resetWarnFlags();
-  await withEnv({
-    LEGATE_SERVER_PASSWORD: 'pw',
-    PREFECT_SERVER_PASSWORD: undefined,
-    OPENCODE_SERVER_PASSWORD: undefined,
-    LEGATE_SERVER_USERNAME: 'new-user',
-    PREFECT_SERVER_USERNAME: 'old-user',
-    OPENCODE_SERVER_USERNAME: undefined,
-  }, async () => {
-    const { warnings } = await captureWarnings(() => buildAuthHeader());
-    const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
-    assert.equal(userWarnings.length, 0, `expected 0 PREFECT_SERVER_USERNAME warnings when LEGATE_SERVER_USERNAME is set, got ${userWarnings.length}`);
-  });
+  await withEnv(
+    {
+      LEGATE_SERVER_PASSWORD: 'pw',
+      PREFECT_SERVER_PASSWORD: undefined,
+      OPENCODE_SERVER_PASSWORD: undefined,
+      LEGATE_SERVER_USERNAME: 'new-user',
+      PREFECT_SERVER_USERNAME: 'old-user',
+      OPENCODE_SERVER_USERNAME: undefined,
+    },
+    async () => {
+      const { warnings } = await captureWarnings(() => buildAuthHeader());
+      const userWarnings = warnings.filter((w) => w.includes('PREFECT_SERVER_USERNAME'));
+      assert.equal(
+        userWarnings.length,
+        0,
+        `expected 0 PREFECT_SERVER_USERNAME warnings when LEGATE_SERVER_USERNAME is set, got ${userWarnings.length}`,
+      );
+    },
+  );
 });
 
 // ── legate-k2a: trusted-host credential gating ──────────────────────────────
@@ -199,7 +247,12 @@ function installMockFetch(responses: Response[]): { requests: Request[]; restore
     i++;
     return Promise.resolve(res);
   };
-  return { requests, restore: () => { (globalThis as unknown as Record<string, unknown>).fetch = orig; } };
+  return {
+    requests,
+    restore: () => {
+      (globalThis as unknown as Record<string, unknown>).fetch = orig;
+    },
+  };
 }
 
 function redirectResponse(location: string, status = 302): Response {
@@ -210,11 +263,17 @@ function redirectResponse(location: string, status = 302): Response {
 function withRegistry(servers: Array<{ name: string; host: string; port: number }>): () => void {
   const dir = mkdtempSync(join(tmpdir(), 'legate-k2a-'));
   const path = join(dir, 'servers.json');
-  writeFileSync(path, JSON.stringify({
-    servers: servers.map((s) => ({ ...s, providerID: '', modelID: '' })),
-  }));
+  writeFileSync(
+    path,
+    JSON.stringify({
+      servers: servers.map((s) => ({ ...s, providerID: '', modelID: '' })),
+    }),
+  );
   _setRegistryPathForTest(path);
-  return () => { _setRegistryPathForTest(undefined); rmSync(dir, { recursive: true, force: true }); };
+  return () => {
+    _setRegistryPathForTest(undefined);
+    rmSync(dir, { recursive: true, force: true });
+  };
 }
 
 function withPassword(pw: string): () => void {
@@ -233,8 +292,15 @@ function withPassword(pw: string): () => void {
 function captureStderr(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
   const orig = console.error;
-  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
-  return { lines, restore: () => { console.error = orig; } };
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  return {
+    lines,
+    restore: () => {
+      console.error = orig;
+    },
+  };
 }
 
 test('_isTrustedHost: loopback hosts are trusted without any registry', () => {
@@ -295,7 +361,11 @@ test('authFetch: UNregistered remote host + password → NOT attached + one-time
       assert.equal(req.headers.get('Authorization'), null, 'credentials must NOT be sent to untrusted host');
     }
     const warns = err.lines.filter((l) => l.includes('Not sending credentials') && l.includes('evil.example'));
-    assert.equal(warns.length, 1, `expected exactly one warning across two calls, got ${warns.length}: ${JSON.stringify(err.lines)}`);
+    assert.equal(
+      warns.length,
+      1,
+      `expected exactly one warning across two calls, got ${warns.length}: ${JSON.stringify(err.lines)}`,
+    );
     assert.ok(warns[0].includes('legate add-server'), 'warning should point to legate add-server');
   } finally {
     err.restore();
@@ -326,10 +396,7 @@ test('authFetch: no password → never attached, no warnings, whatever the host'
 
 test('authFetch: same-host redirect with auth → followed, auth present on second request', async () => {
   const restorePw = withPassword('secret');
-  const mock = installMockFetch([
-    redirectResponse('http://localhost:4096/after'),
-    new Response('ok', { status: 200 }),
-  ]);
+  const mock = installMockFetch([redirectResponse('http://localhost:4096/after'), new Response('ok', { status: 200 })]);
   try {
     const res = await authFetch(new Request('http://localhost:4096/before'));
     assert.equal(res.status, 200);
@@ -346,10 +413,7 @@ test('authFetch: same-host redirect with auth → followed, auth present on seco
 
 test('authFetch: cross-host redirect with auth → second request has NO Authorization header', async () => {
   const restorePw = withPassword('secret');
-  const mock = installMockFetch([
-    redirectResponse('http://evil.example/steal'),
-    new Response('ok', { status: 200 }),
-  ]);
+  const mock = installMockFetch([redirectResponse('http://evil.example/steal'), new Response('ok', { status: 200 })]);
   const err = captureStderr();
   try {
     const res = await authFetch(new Request('http://localhost:4096/before'));

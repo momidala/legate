@@ -24,11 +24,13 @@ function fakeSpawn(cmd: string, args: string[]): ReturnType<typeof SpawnType> {
       listeners.set(event, cb);
       if (event === 'error' && spawnErrorToEmit) {
         const err = spawnErrorToEmit;
-        setImmediate(() => cb(err));  // async, like the real ENOENT delivery
+        setImmediate(() => cb(err)); // async, like the real ENOENT delivery
       }
       return child;
     },
-    unref() { /* no-op */ },
+    unref() {
+      /* no-op */
+    },
   };
   return child as unknown as ReturnType<typeof SpawnType>;
 }
@@ -103,14 +105,17 @@ test('ensureOpencodeRunning throws when OpenCode does not become healthy within 
 test('ensureOpencodeRunning health poll uses authFetch (injects auth header when password set)', async () => {
   await withEnv({ LEGATE_SERVER_PASSWORD: 'healthtest' }, async () => {
     let capturedAuth: string | null = null;
-    await withMockedFetch((req: Request) => {
-      capturedAuth = req.headers.get('Authorization');
-      return Promise.resolve(new Response('{}', { status: 200 }));
-    }, async () => {
-      await ensureOpencodeRunning(LOCAL);
-      const expected = `Basic ${Buffer.from('opencode:healthtest').toString('base64')}`;
-      assert.equal(capturedAuth, expected, 'health poll should inject Authorization header');
-    });
+    await withMockedFetch(
+      (req: Request) => {
+        capturedAuth = req.headers.get('Authorization');
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      },
+      async () => {
+        await ensureOpencodeRunning(LOCAL);
+        const expected = `Basic ${Buffer.from('opencode:healthtest').toString('base64')}`;
+        assert.equal(capturedAuth, expected, 'health poll should inject Authorization header');
+      },
+    );
   });
 });
 
@@ -118,7 +123,10 @@ test('health poll URL targets server.host:server.port (not BASE_URL)', async () 
   const urlCapture = { url: '' };
   await withMockedFetch(mockOk(undefined, urlCapture), async () => {
     await ensureOpencodeRunning(CUSTOM);
-    assert.ok(urlCapture.url.includes(':4099/global/health'), `expected :4099/global/health in URL, got: ${urlCapture.url}`);
+    assert.ok(
+      urlCapture.url.includes(':4099/global/health'),
+      `expected :4099/global/health in URL, got: ${urlCapture.url}`,
+    );
   });
 });
 
@@ -160,8 +168,15 @@ test('autostartTimeoutMs emits one-time deprecation warning for PREFECT_AUTOSTAR
   await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: undefined, PREFECT_AUTOSTART_TIMEOUT_MS: '5000' }, async () => {
     const { warnings } = await captureWarnings(() => autostartTimeoutMs());
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
-    assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning, got ${timeoutWarnings.length}: ${JSON.stringify(warnings)}`);
-    assert.ok(timeoutWarnings[0].includes('LEGATE_AUTOSTART_TIMEOUT_MS'), `warning should mention LEGATE_AUTOSTART_TIMEOUT_MS: ${timeoutWarnings[0]}`);
+    assert.equal(
+      timeoutWarnings.length,
+      1,
+      `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning, got ${timeoutWarnings.length}: ${JSON.stringify(warnings)}`,
+    );
+    assert.ok(
+      timeoutWarnings[0].includes('LEGATE_AUTOSTART_TIMEOUT_MS'),
+      `warning should mention LEGATE_AUTOSTART_TIMEOUT_MS: ${timeoutWarnings[0]}`,
+    );
   });
 });
 
@@ -173,7 +188,11 @@ test('autostartTimeoutMs emits PREFECT_AUTOSTART_TIMEOUT_MS warning exactly once
       autostartTimeoutMs(); // second call — must NOT emit a second warning
     });
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
-    assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning across 2 calls, got ${timeoutWarnings.length}`);
+    assert.equal(
+      timeoutWarnings.length,
+      1,
+      `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning across 2 calls, got ${timeoutWarnings.length}`,
+    );
   });
 });
 
@@ -182,6 +201,10 @@ test('autostartTimeoutMs emits NO PREFECT_AUTOSTART_TIMEOUT_MS warning when LEGA
   await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: '10000', PREFECT_AUTOSTART_TIMEOUT_MS: '5000' }, async () => {
     const { warnings } = await captureWarnings(() => autostartTimeoutMs());
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
-    assert.equal(timeoutWarnings.length, 0, `expected 0 PREFECT_AUTOSTART_TIMEOUT_MS warnings when LEGATE_AUTOSTART_TIMEOUT_MS is set, got ${timeoutWarnings.length}`);
+    assert.equal(
+      timeoutWarnings.length,
+      0,
+      `expected 0 PREFECT_AUTOSTART_TIMEOUT_MS warnings when LEGATE_AUTOSTART_TIMEOUT_MS is set, got ${timeoutWarnings.length}`,
+    );
   });
 });

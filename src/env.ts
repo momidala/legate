@@ -78,7 +78,9 @@ export function resolveEnvInt(names: string[], defaultValue: number, options?: R
     const warnKey = `invalid:${entry.name}`;
     if (!warnedNames.has(warnKey)) {
       warnedNames.add(warnKey);
-      console.error(`[Legate] ${entry.name}=${entry.value} is invalid — must be a positive integer; using default ${defaultValue}`);
+      console.error(
+        `[Legate] ${entry.name}=${entry.value} is invalid — must be a positive integer; using default ${defaultValue}`,
+      );
     }
     return defaultValue;
   }

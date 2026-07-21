@@ -23,16 +23,16 @@ const isGlobal = process.env.npm_config_global === 'true';
 // Global: use the legate-mcp PATH bin (added as a second bin entry in package.json).
 // Local: use node + absolute path so Claude Code can spawn from any cwd.
 const LEGATE_ENTRY = isGlobal
-  ? {
+  ? ({
       type: 'stdio',
       command: 'legate-mcp',
       args: [],
-    } as const
-  : {
+    } as const)
+  : ({
       type: 'stdio',
       command: 'node',
       args: [resolve(__dirname, 'index.js')],
-    } as const;
+    } as const);
 
 // Template for ~/.claude/commands/legate-update.md (SELFUP-03, SELFUP-04, SELFUP-05).
 // Format: Claude Code slash command markdown — invoked as /legate-update.
@@ -84,7 +84,8 @@ const LEGATE_SKILL_CARD_STATIC: string = `# Legate — Skill Card
 function buildWorkersSection(): string {
   const { servers } = readRegistry();
   const bullets = servers.map(
-    (s) => `- **${s.name}** — ${s.providerID}/${s.modelID}, ${s.host}:${s.port}, capacity: ${s.maxSessions ?? 'unlimited'}`
+    (s) =>
+      `- **${s.name}** — ${s.providerID}/${s.modelID}, ${s.host}:${s.port}, capacity: ${s.maxSessions ?? 'unlimited'}`,
   );
   const content = bullets.length > 0 ? bullets.join('\n') : '*(no servers registered — run: legate add-server)*';
   return `\n## Available Workers\n\n${content}\n`;
@@ -96,7 +97,8 @@ function updateClaudemdWorkers(cwd: string): void {
   const { servers } = readRegistry();
 
   const bullets = servers.map(
-    (s) => `- **${s.name}** — ${s.providerID}/${s.modelID}, ${s.host}:${s.port}, capacity: ${s.maxSessions ?? 'unlimited'}`
+    (s) =>
+      `- **${s.name}** — ${s.providerID}/${s.modelID}, ${s.host}:${s.port}, capacity: ${s.maxSessions ?? 'unlimited'}`,
   );
   const sectionContent = bullets.length > 0 ? bullets.join('\n') : '*(no servers registered)*';
   const newSection = `## Available Workers\n\n${sectionContent}\n`;
@@ -115,11 +117,9 @@ function updateClaudemdWorkers(cwd: string): void {
     const tail = endIdx === -1 ? [] : fileLines.slice(endIdx);
     const sectionLines = newSection.split('\n');
     if (sectionLines[sectionLines.length - 1] === '') sectionLines.pop();
-    updated = [
-      ...fileLines.slice(0, startIdx),
-      ...sectionLines,
-      ...(tail.length > 0 ? ['', ...tail] : ['']),
-    ].join('\n');
+    updated = [...fileLines.slice(0, startIdx), ...sectionLines, ...(tail.length > 0 ? ['', ...tail] : [''])].join(
+      '\n',
+    );
   }
 
   // Normalize: exactly one trailing newline
@@ -129,14 +129,14 @@ function updateClaudemdWorkers(cwd: string): void {
 function usageAndExit(): never {
   console.error(
     'Usage: legate <subcommand> [options]\n\n' +
-    'Subcommands:\n' +
-    '  init [--force]                          Write .mcp.json for this project\n' +
-    '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
-    '  remove-server <name>                    Remove a named server from the registry\n' +
-    '  list-servers                            List all registered servers\n' +
-    '  install-command                         Install /legate and /legate-update Claude commands (global installs only)\n' +
-    '  uninstall-command                       Remove /legate and /legate-update Claude commands (global installs only)\n' +
-    '  version                                 Print the installed version',
+      'Subcommands:\n' +
+      '  init [--force]                          Write .mcp.json for this project\n' +
+      '  add-server <name> <host> <port> <provider> <model> [--max-sessions <n>]  Register a named OpenCode server\n' +
+      '  remove-server <name>                    Remove a named server from the registry\n' +
+      '  list-servers                            List all registered servers\n' +
+      '  install-command                         Install /legate and /legate-update Claude commands (global installs only)\n' +
+      '  uninstall-command                       Remove /legate and /legate-update Claude commands (global installs only)\n' +
+      '  version                                 Print the installed version',
   );
   process.exit(1);
 }
@@ -167,8 +167,14 @@ function handleAddServer(handlerArgs: string[]): never {
     process.exit(1);
   }
   addServer({ name, host, port, providerID, modelID, ...(maxSessions !== undefined ? { maxSessions } : {}) });
-  console.error(`Registered server '${name}' at ${host}:${port} (${providerID}/${modelID})${maxSessions !== undefined ? `, max sessions: ${maxSessions}` : ''}`);
-  try { updateClaudemdWorkers(process.cwd()); } catch (e) { console.error(`Warning: could not update CLAUDE.md: ${(e as Error).message}`); }
+  console.error(
+    `Registered server '${name}' at ${host}:${port} (${providerID}/${modelID})${maxSessions !== undefined ? `, max sessions: ${maxSessions}` : ''}`,
+  );
+  try {
+    updateClaudemdWorkers(process.cwd());
+  } catch (e) {
+    console.error(`Warning: could not update CLAUDE.md: ${(e as Error).message}`);
+  }
   process.exit(0);
 }
 
@@ -184,7 +190,11 @@ function handleRemoveServer(handlerArgs: string[]): never {
     console.error(`Error: ${(err as Error).message}`);
     process.exit(1);
   }
-  try { updateClaudemdWorkers(process.cwd()); } catch (e) { console.error(`Warning: could not update CLAUDE.md: ${(e as Error).message}`); }
+  try {
+    updateClaudemdWorkers(process.cwd());
+  } catch (e) {
+    console.error(`Warning: could not update CLAUDE.md: ${(e as Error).message}`);
+  }
   process.exit(0);
 }
 
@@ -239,9 +249,9 @@ function printOnboardingIfNoServers(): void {
   if (reg.servers.length === 0) {
     console.error(
       '\nNo servers registered yet. Register your first OpenCode server:\n' +
-      '  legate add-server <name> <host> <port> <provider> <model>\n' +
-      'Example:\n' +
-      '  legate add-server local localhost 4096 ollama qwen2.5-coder'
+        '  legate add-server <name> <host> <port> <provider> <model>\n' +
+        'Example:\n' +
+        '  legate add-server local localhost 4096 ollama qwen2.5-coder',
     );
   }
 }
@@ -254,7 +264,9 @@ const subcommand = args[0];
 const force = args.includes('--force');
 
 if (subcommand === '--version' || subcommand === '-v') {
-  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  };
   console.log(version);
   process.exit(0);
 }
@@ -332,7 +344,9 @@ switch (subcommand) {
     handleUninstallCommand();
     break;
   case 'version': {
-    const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string;
+    };
     console.log(version);
     process.exit(0);
     break;

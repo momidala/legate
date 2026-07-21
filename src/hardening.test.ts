@@ -111,15 +111,28 @@ if (!existsSync(SERVER_ENTRY)) {
   throw new Error(`Build artifact missing: run 'npm run build' first`);
 }
 
-interface MockReq { method: string; path: string; body: string }
-interface MockRes { status?: number; json?: unknown }
-interface MockServer { port: number; log: MockReq[]; close: () => Promise<void> }
+interface MockReq {
+  method: string;
+  path: string;
+  body: string;
+}
+interface MockRes {
+  status?: number;
+  json?: unknown;
+}
+interface MockServer {
+  port: number;
+  log: MockReq[];
+  close: () => Promise<void>;
+}
 
 function startMock(handler: (req: MockReq) => MockRes): Promise<MockServer> {
   const log: MockReq[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
-    req.on('data', (c) => { body += c; });
+    req.on('data', (c) => {
+      body += c;
+    });
     req.on('end', () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
       const entry: MockReq = { method: req.method ?? '', path, body };
@@ -141,16 +154,20 @@ function startMock(handler: (req: MockReq) => MockRes): Promise<MockServer> {
       resolvePromise({
         port,
         log,
-        close: () => new Promise<void>((r) => {
-          (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
-          server.close(() => r());
-        }),
+        close: () =>
+          new Promise<void>((r) => {
+            (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+            server.close(() => r());
+          }),
       });
     });
   });
 }
 
-interface ToolCallResult { text: string; isError: boolean }
+interface ToolCallResult {
+  text: string;
+  isError: boolean;
+}
 
 class McpClient {
   private child!: ChildProcess;
@@ -172,9 +189,16 @@ class McpClient {
         this.buf = this.buf.slice(nl + 1);
         if (!line) continue;
         let msg: Record<string, unknown>;
-        try { msg = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+        try {
+          msg = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
         const id = msg.id as number | undefined;
-        if (id !== undefined && this.pending.has(id)) { this.pending.get(id)!(msg); this.pending.delete(id); }
+        if (id !== undefined && this.pending.has(id)) {
+          this.pending.get(id)!(msg);
+          this.pending.delete(id);
+        }
       }
     });
     await this.rpc('initialize', {
@@ -188,8 +212,14 @@ class McpClient {
   private rpc(method: string, params: unknown, timeoutMs = 25_000): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     return new Promise((res, rej) => {
-      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error(`rpc timed out: ${method}`)); }, timeoutMs);
-      this.pending.set(id, (msg) => { clearTimeout(timer); res(msg); });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rej(new Error(`rpc timed out: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, (msg) => {
+        clearTimeout(timer);
+        res(msg);
+      });
       this.child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
@@ -211,7 +241,10 @@ class McpClient {
   }
 }
 
-interface Home { home: string; sessionsPath: string }
+interface Home {
+  home: string;
+  sessionsPath: string;
+}
 
 function makeHome(): Home {
   const home = mkdtempSync(join(tmpdir(), 'legate-tcg-home-'));
@@ -233,10 +266,17 @@ function childEnv(home: string, serverUrl: string, extra: Record<string, string>
     LEGATE_TIMEOUT_MS: '30000',
   };
   for (const k of [
-    'LEGATE_DEFAULT_PROJECT', 'PREFECT_DEFAULT_PROJECT', 'OPENCODE_DEFAULT_PROJECT',
-    'LEGATE_SERVER_PASSWORD', 'PREFECT_SERVER_PASSWORD', 'OPENCODE_SERVER_PASSWORD',
-    'PREFECT_SERVER_URL', 'OPENCODE_URL', 'LEGATE_ENABLE_EXEC_TOOLS',
-  ]) delete env[k];
+    'LEGATE_DEFAULT_PROJECT',
+    'PREFECT_DEFAULT_PROJECT',
+    'OPENCODE_DEFAULT_PROJECT',
+    'LEGATE_SERVER_PASSWORD',
+    'PREFECT_SERVER_PASSWORD',
+    'OPENCODE_SERVER_PASSWORD',
+    'PREFECT_SERVER_URL',
+    'OPENCODE_URL',
+    'LEGATE_ENABLE_EXEC_TOOLS',
+  ])
+    delete env[k];
   return { ...env, ...extra };
 }
 
@@ -305,7 +345,9 @@ test('legate-tcg: gate — LEGATE_ENABLE_EXEC_TOOLS unset → inject_mcp_server 
     writeSessions(h, {});
     await client.start(childEnv(h.home, url)); // unset
     const r = await client.callTool('legate_inject_mcp_server', {
-      name: 'evil', configType: 'local', commandArgs: ['node', '/tmp/x.js'],
+      name: 'evil',
+      configType: 'local',
+      commandArgs: ['node', '/tmp/x.js'],
     });
     assert.equal(r.isError, true, `expected disabled isError, got: ${r.text}`);
     assert.ok(r.text.includes('legate_inject_mcp_server is disabled'), `should name the tool: ${r.text}`);

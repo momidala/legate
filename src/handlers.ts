@@ -13,11 +13,11 @@ export interface RunPromptOptions {
   agent?: string;
   system?: string;
   // New in Phase 10:
-  tools?: Record<string, boolean>;                                                          // RUN-05
-  files?: Array<{ type: 'file'; mime: string; filename?: string; url: string }>;            // RUN-06
-  messageID?: string;                                                                        // RUN-07
-  agentInput?: { type: 'agent'; name: string };                                             // RUN-08
-  subtaskInput?: { type: 'subtask'; prompt: string; description: string; agent: string };   // RUN-08
+  tools?: Record<string, boolean>; // RUN-05
+  files?: Array<{ type: 'file'; mime: string; filename?: string; url: string }>; // RUN-06
+  messageID?: string; // RUN-07
+  agentInput?: { type: 'agent'; name: string }; // RUN-08
+  subtaskInput?: { type: 'subtask'; prompt: string; description: string; agent: string }; // RUN-08
 }
 
 /**
@@ -29,16 +29,16 @@ export async function createSession(
   client: OpencodeClient,
   title: string | undefined,
   directory: string | undefined,
-  parentID?: string,                                       // SESSION-10
-  serverUrl?: string,                                      // NEW — for sessions.json write (D-11)
-  serverName?: string,                                     // NEW — store name alongside URL per D-08
-  model?: { providerID: string; modelID: string },         // registered server model — auto-injected on prefect_run
-  maxSessions?: number | null,                             // WR-01: capacity cap for atomic check-and-add
+  parentID?: string, // SESSION-10
+  serverUrl?: string, // NEW — for sessions.json write (D-11)
+  serverName?: string, // NEW — store name alongside URL per D-08
+  model?: { providerID: string; modelID: string }, // registered server model — auto-injected on prefect_run
+  maxSessions?: number | null, // WR-01: capacity cap for atomic check-and-add
 ): Promise<{ id: string; [key: string]: unknown }> {
   const { data, error } = await client.session.create({
     body: {
       ...(title !== undefined ? { title } : {}),
-      ...(parentID ? { parentID } : {}),                   // NEW — only included when provided
+      ...(parentID ? { parentID } : {}), // NEW — only included when provided
     },
     query: directory ? { directory } : undefined,
   });
@@ -50,13 +50,22 @@ export async function createSession(
   if (serverUrl && serverName) {
     // legate-ale: persist the project directory so the liveness probe in atomicCheckAndAdd
     // can scope GET /session/:id to the right project. Omitted when no directory was provided.
-    const entry = { server: serverName, url: serverUrl, ...(model ? { model } : {}), ...(directory ? { directory } : {}) };
+    const entry = {
+      server: serverName,
+      url: serverUrl,
+      ...(model ? { model } : {}),
+      ...(directory ? { directory } : {}),
+    };
     // WR-01: always use the atomic lock (even when maxSessions is null) so concurrent
     // instances cannot produce a lost write. atomicCheckAndAdd skips the capacity check
     // when maxSessions is null but still acquires the lock for the write.
     const capacityError = await atomicCheckAndAdd(data.id, entry, maxSessions);
     if (capacityError) {
-      try { await client.session.delete({ path: { id: data.id } }); } catch { /* best-effort */ }
+      try {
+        await client.session.delete({ path: { id: data.id } });
+      } catch {
+        /* best-effort */
+      }
       throw new Error(capacityError);
     }
   }
@@ -81,10 +90,18 @@ export async function createSessionOnServer(
   const serverName = ctx.serverNameForUrl(serverUrl, opts.serverParam);
   const client = ctx.getClient(serverUrl);
   const entry = findServerByName(serverName);
-  const model = (entry?.providerID && entry?.modelID)
-    ? { providerID: entry.providerID, modelID: entry.modelID }
-    : undefined;
-  const session = await createSession(client, opts.title, opts.dir, opts.parentID, serverUrl, serverName, model, entry?.maxSessions);
+  const model =
+    entry?.providerID && entry?.modelID ? { providerID: entry.providerID, modelID: entry.modelID } : undefined;
+  const session = await createSession(
+    client,
+    opts.title,
+    opts.dir,
+    opts.parentID,
+    serverUrl,
+    serverName,
+    model,
+    entry?.maxSessions,
+  );
   return { session, client, serverUrl };
 }
 
@@ -147,7 +164,17 @@ export async function getDiff(
   sessionId: string,
   messageID: string | undefined,
   directory: string | undefined,
-): Promise<Array<{ file: string; before?: string; after?: string; additions: number; deletions: number; patch: string; status?: string }>> {
+): Promise<
+  Array<{
+    file: string;
+    before?: string;
+    after?: string;
+    additions: number;
+    deletions: number;
+    patch: string;
+    status?: string;
+  }>
+> {
   const { data, error } = await client.session.diff({
     path: { id: sessionId },
     query: {

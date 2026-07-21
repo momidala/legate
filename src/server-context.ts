@@ -108,11 +108,9 @@ export function createServerContext(server: McpServer): ServerContext {
   // LEGATE_TIMEOUT_MS falls through to PREFECT_TIMEOUT_MS silently rather than winning.
   // resolveEnvInt also adds NaN/<=0 validation that the old `parseInt(v, 10) || 120_000`
   // pattern silently lacked (0 or negative previously resolved with no warning at all).
-  const TIMEOUT_MS = resolveEnvInt(
-    ['LEGATE_TIMEOUT_MS', 'PREFECT_TIMEOUT_MS', 'OPENCODE_TIMEOUT_MS'],
-    120_000,
-    { requireTruthy: true },
-  );
+  const TIMEOUT_MS = resolveEnvInt(['LEGATE_TIMEOUT_MS', 'PREFECT_TIMEOUT_MS', 'OPENCODE_TIMEOUT_MS'], 120_000, {
+    requireTruthy: true,
+  });
 
   // D-01..D-03: per-URL client cache. Replaces the single global client so the
   // MCP server can route tool calls to multiple OpenCode instances.

@@ -26,8 +26,16 @@ if (!existsSync(SERVER_ENTRY)) {
 }
 
 // ── Mock OpenCode HTTP server ───────────────────────────────────────────────
-interface MockReq { method: string; path: string; body: string }
-interface MockRes { status?: number; json?: unknown; hang?: boolean }
+interface MockReq {
+  method: string;
+  path: string;
+  body: string;
+}
+interface MockRes {
+  status?: number;
+  json?: unknown;
+  hang?: boolean;
+}
 interface MockServer {
   port: number;
   log: MockReq[];
@@ -38,7 +46,9 @@ function startMock(handler: (req: MockReq) => MockRes): Promise<MockServer> {
   const log: MockReq[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
-    req.on('data', (c) => { body += c; });
+    req.on('data', (c) => {
+      body += c;
+    });
     req.on('end', () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
       const entry: MockReq = { method: req.method ?? '', path, body };
@@ -61,18 +71,22 @@ function startMock(handler: (req: MockReq) => MockRes): Promise<MockServer> {
       resolvePromise({
         port,
         log,
-        close: () => new Promise<void>((r) => {
-          // Destroy any lingering (aborted / hung) sockets so close() resolves promptly.
-          (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
-          server.close(() => r());
-        }),
+        close: () =>
+          new Promise<void>((r) => {
+            // Destroy any lingering (aborted / hung) sockets so close() resolves promptly.
+            (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+            server.close(() => r());
+          }),
       });
     });
   });
 }
 
 // ── Minimal MCP stdio client ────────────────────────────────────────────────
-interface ToolResult { text: string; isError: boolean }
+interface ToolResult {
+  text: string;
+  isError: boolean;
+}
 
 class McpClient {
   private child!: ChildProcess;
@@ -94,9 +108,16 @@ class McpClient {
         this.buf = this.buf.slice(nl + 1);
         if (!line) continue;
         let msg: Record<string, unknown>;
-        try { msg = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+        try {
+          msg = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
         const id = msg.id as number | undefined;
-        if (id !== undefined && this.pending.has(id)) { this.pending.get(id)!(msg); this.pending.delete(id); }
+        if (id !== undefined && this.pending.has(id)) {
+          this.pending.get(id)!(msg);
+          this.pending.delete(id);
+        }
       }
     });
     await this.rpc('initialize', {
@@ -110,8 +131,14 @@ class McpClient {
   private rpc(method: string, params: unknown, timeoutMs = 25_000): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     return new Promise((res, rej) => {
-      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error(`rpc timed out: ${method}`)); }, timeoutMs);
-      this.pending.set(id, (msg) => { clearTimeout(timer); res(msg); });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rej(new Error(`rpc timed out: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, (msg) => {
+        clearTimeout(timer);
+        res(msg);
+      });
       this.child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
@@ -128,7 +155,11 @@ class McpClient {
 }
 
 // ── Temp HOME + child env helpers ───────────────────────────────────────────
-interface Home { home: string; sessionsPath: string; serversPath: string }
+interface Home {
+  home: string;
+  sessionsPath: string;
+  serversPath: string;
+}
 
 function makeHome(): Home {
   const home = mkdtempSync(join(tmpdir(), 'legate-home-'));
@@ -154,10 +185,16 @@ function childEnv(home: string, serverUrl: string, timeoutMs: number): NodeJS.Pr
   };
   // Strip anything that could make routing / directory / auth host-dependent.
   for (const k of [
-    'LEGATE_DEFAULT_PROJECT', 'PREFECT_DEFAULT_PROJECT', 'OPENCODE_DEFAULT_PROJECT',
-    'LEGATE_SERVER_PASSWORD', 'PREFECT_SERVER_PASSWORD', 'OPENCODE_SERVER_PASSWORD',
-    'PREFECT_SERVER_URL', 'OPENCODE_URL',
-  ]) delete env[k];
+    'LEGATE_DEFAULT_PROJECT',
+    'PREFECT_DEFAULT_PROJECT',
+    'OPENCODE_DEFAULT_PROJECT',
+    'LEGATE_SERVER_PASSWORD',
+    'PREFECT_SERVER_PASSWORD',
+    'OPENCODE_SERVER_PASSWORD',
+    'PREFECT_SERVER_URL',
+    'OPENCODE_URL',
+  ])
+    delete env[k];
   return env;
 }
 
@@ -243,14 +280,18 @@ test('legate-e1i: legate_abort — unknown session, all registered servers 404, 
 // legate_await — poll loop, timeout, and stale-busy escape (legate-tia)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const completedAssistantMsg = [{
-  info: { role: 'assistant', time: { created: 1, completed: 2 } },
-  parts: [{ type: 'text', text: 'done' }],
-}];
-const inProgressAssistantMsg = [{
-  info: { role: 'assistant', time: { created: 1 } }, // NO completed → still generating
-  parts: [],
-}];
+const completedAssistantMsg = [
+  {
+    info: { role: 'assistant', time: { created: 1, completed: 2 } },
+    parts: [{ type: 'text', text: 'done' }],
+  },
+];
+const inProgressAssistantMsg = [
+  {
+    info: { role: 'assistant', time: { created: 1 } }, // NO completed → still generating
+    parts: [],
+  },
+];
 
 function awaitHandler(statusBody: unknown, messages: unknown): (req: MockReq) => MockRes {
   return (req) => {

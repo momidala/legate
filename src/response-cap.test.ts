@@ -50,7 +50,10 @@ test('legate-ur1: capDiffResponse truncates patch strings when stripping is not 
   const cap = 500;
   const out = capDiffResponse(diffs, cap) as TruncatedDiff;
   assert.equal(out.truncated, true);
-  assert.ok(out.files[0].patch.includes('…[truncated'), `patch should carry the truncation marker: ${out.files[0].patch.slice(-40)}`);
+  assert.ok(
+    out.files[0].patch.includes('…[truncated'),
+    `patch should carry the truncation marker: ${out.files[0].patch.slice(-40)}`,
+  );
   assert.ok(JSON.stringify(out).length <= cap, 'truncated envelope must fit under the cap');
 });
 
@@ -84,7 +87,11 @@ test('legate-ur1: capMessagesResponse drops oldest messages and reports the coun
   assert.ok(JSON.stringify(out).length <= cap, 'envelope must fit under the cap');
   // The kept messages must be the NEWEST ones (oldest dropped from the front).
   const keptIdx = (out.messages as Array<{ info: { idx: number } }>).map((m) => m.info.idx);
-  assert.deepEqual(keptIdx, [...keptIdx].sort((a, b) => a - b), 'kept indices ascending');
+  assert.deepEqual(
+    keptIdx,
+    [...keptIdx].sort((a, b) => a - b),
+    'kept indices ascending',
+  );
   assert.equal(keptIdx[keptIdx.length - 1], 9, 'the newest message is retained');
 });
 

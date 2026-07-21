@@ -10,10 +10,10 @@ import { resolveEnvNum } from './env.js';
 const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
 
 export interface SessionEntry {
-  server: string;  // name from registry (must match a ServerEntry.name in servers.json)
-  url: string;     // full http://host:port URL — stored alongside name so error messages show both without re-lookup
-  model?: { providerID: string; modelID: string };  // registered model for this server — auto-injected on every prefect_run
-  parentId?: string;  // set when session was created via prefect_fork — used by prefect_session_children
+  server: string; // name from registry (must match a ServerEntry.name in servers.json)
+  url: string; // full http://host:port URL — stored alongside name so error messages show both without re-lookup
+  model?: { providerID: string; modelID: string }; // registered model for this server — auto-injected on every prefect_run
+  parentId?: string; // set when session was created via prefect_fork — used by prefect_session_children
   createdAt?: number; // unix ms — used for TTL pruning; absent on legacy entries (treated as non-expired)
   directory?: string; // absolute project dir the session was created in — threaded into the liveness probe (legate-ale) so OpenCode's per-project session scoping doesn't 404 live sessions in non-default projects; absent on legacy/default-cwd entries (probe omits the query param, matching prior behavior)
 }
@@ -147,11 +147,15 @@ export async function addSession(
   sessionsPath: string = SESSIONS_PATH,
   lockOpts?: LockOverride,
 ): Promise<void> {
-  await withSessionLock(() => {
-    const map = readSessionMap(sessionsPath);
-    map.sessions[sessionId] = { createdAt: Date.now(), ...entry };
-    writeSessionMap(map, sessionsPath);
-  }, sessionsPath, lockOpts);
+  await withSessionLock(
+    () => {
+      const map = readSessionMap(sessionsPath);
+      map.sessions[sessionId] = { createdAt: Date.now(), ...entry };
+      writeSessionMap(map, sessionsPath);
+    },
+    sessionsPath,
+    lockOpts,
+  );
 }
 
 /**
@@ -172,16 +176,20 @@ export async function removeSession(
   lockOpts?: LockOverride,
 ): Promise<void> {
   try {
-    await withSessionLock(() => {
-      const map = readSessionMap(sessionsPath);
-      if (!(sessionId in map.sessions)) return;  // silent no-op (D-12 cleanup must be idempotent)
-      delete map.sessions[sessionId];
-      writeSessionMap(map, sessionsPath);
-    }, sessionsPath, lockOpts);
+    await withSessionLock(
+      () => {
+        const map = readSessionMap(sessionsPath);
+        if (!(sessionId in map.sessions)) return; // silent no-op (D-12 cleanup must be idempotent)
+        delete map.sessions[sessionId];
+        writeSessionMap(map, sessionsPath);
+      },
+      sessionsPath,
+      lockOpts,
+    );
   } catch (err) {
     console.error(
       `[Legate] Warning: could not acquire sessions.json lock to remove ${sessionId}; ` +
-      `skipping (stale entry will be pruned by the TTL/liveness sweep): ${(err as Error).message}`,
+        `skipping (stale entry will be pruned by the TTL/liveness sweep): ${(err as Error).message}`,
     );
   }
 }
@@ -292,7 +300,7 @@ export async function atomicCheckAndAdd(
     // Read RAW under the lock (not the filtered readSessionMap) so pruneExpiredSessions can
     // physically remove expired entries here — the one write path that cleans TTL'd sessions.
     const map = parseSessionsFile(sessionsPath);
-    let pruned = pruneExpiredSessions(map);  // TTL prune under the lock (legate-yho)
+    let pruned = pruneExpiredSessions(map); // TTL prune under the lock (legate-yho)
     // Prune dead sessions found during pre-lock liveness check.
     for (const deadId of deadIds) {
       if (deadId in map.sessions && map.sessions[deadId].server === entry.server) {

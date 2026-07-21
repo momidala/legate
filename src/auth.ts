@@ -22,17 +22,16 @@ import { readRegistry, REGISTRY_PATH } from './registry.js';
  * fallback value still wins the chain, but does not itself warn.
  */
 export function buildAuthHeader(): Record<string, string> {
-  const password = resolveEnv(
-    ['LEGATE_SERVER_PASSWORD', 'PREFECT_SERVER_PASSWORD', 'OPENCODE_SERVER_PASSWORD'],
-    { quietEmptyWarn: true },
-  );
+  const password = resolveEnv(['LEGATE_SERVER_PASSWORD', 'PREFECT_SERVER_PASSWORD', 'OPENCODE_SERVER_PASSWORD'], {
+    quietEmptyWarn: true,
+  });
 
   if (!password) return {};
 
-  const username = resolveEnv(
-    ['LEGATE_SERVER_USERNAME', 'PREFECT_SERVER_USERNAME', 'OPENCODE_SERVER_USERNAME'],
-    { quietEmptyWarn: true },
-  ) ?? 'opencode';
+  const username =
+    resolveEnv(['LEGATE_SERVER_USERNAME', 'PREFECT_SERVER_USERNAME', 'OPENCODE_SERVER_USERNAME'], {
+      quietEmptyWarn: true,
+    }) ?? 'opencode';
 
   const token = Buffer.from(`${username}:${password}`).toString('base64');
   return { Authorization: `Basic ${token}` };
@@ -131,9 +130,7 @@ async function followManualRedirects(initial: Request): Promise<Response> {
       delete nextHeaders['authorization'];
       if (!_warnedRedirectHosts.has(to.host)) {
         _warnedRedirectHosts.add(to.host);
-        console.error(
-          `[Legate] authFetch: cross-host redirect to ${to.host} — following WITHOUT credentials.`,
-        );
+        console.error(`[Legate] authFetch: cross-host redirect to ${to.host} — following WITHOUT credentials.`);
       }
     }
 

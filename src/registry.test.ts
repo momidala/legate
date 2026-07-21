@@ -5,7 +5,18 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readRegistry, writeRegistry, addServer, removeServer, _runRegistryMigration, serverUrl, findServerByName, findServerByUrl, firstServer, isValidServerEntry } from './registry.js';
+import {
+  readRegistry,
+  writeRegistry,
+  addServer,
+  removeServer,
+  _runRegistryMigration,
+  serverUrl,
+  findServerByName,
+  findServerByUrl,
+  firstServer,
+  isValidServerEntry,
+} from './registry.js';
 import { ServerEntrySchema } from './schemas.js';
 import { countSessionsForServer } from './sessions.js';
 
@@ -160,11 +171,16 @@ test('MULTI-11: addServer round-trips maxSessions field', () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'servers.json');
-    addServer({ name: 'capped', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3', maxSessions: 5 }, regPath);
+    addServer(
+      { name: 'capped', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3', maxSessions: 5 },
+      regPath,
+    );
     const reg = readRegistry(regPath);
     assert.equal(reg.servers[0].maxSessions, 5);
     assert.equal(typeof reg.servers[0].maxSessions, 'number');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: addServer without maxSessions stores no maxSessions key', () => {
@@ -176,35 +192,55 @@ test('MULTI-11: addServer without maxSessions stores no maxSessions key', () => 
     assert.equal(reg.servers[0].maxSessions, undefined);
     const raw = JSON.parse(readFileSync(regPath, 'utf8'));
     assert.ok(!('maxSessions' in raw.servers[0]), 'maxSessions must not appear in JSON when not set');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: countSessionsForServer returns count of matching sessions', () => {
   const dir = freshTmp();
   try {
     const sessionsPath = join(dir, 'sessions.json');
-    writeFileSync(sessionsPath, JSON.stringify({
-      sessions: {
-        's1': { server: 'local', url: 'http://localhost:4096' },
-        's2': { server: 'local', url: 'http://localhost:4096' },
-        's3': { server: 'dev', url: 'http://devbox:4097' },
-      }
-    }, null, 2) + '\n');
+    writeFileSync(
+      sessionsPath,
+      JSON.stringify(
+        {
+          sessions: {
+            s1: { server: 'local', url: 'http://localhost:4096' },
+            s2: { server: 'local', url: 'http://localhost:4096' },
+            s3: { server: 'dev', url: 'http://devbox:4097' },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     assert.equal(countSessionsForServer('local', sessionsPath), 2);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: countSessionsForServer returns 0 for absent server', () => {
   const dir = freshTmp();
   try {
     const sessionsPath = join(dir, 'sessions.json');
-    writeFileSync(sessionsPath, JSON.stringify({
-      sessions: {
-        's1': { server: 'local', url: 'http://localhost:4096' },
-      }
-    }, null, 2) + '\n');
+    writeFileSync(
+      sessionsPath,
+      JSON.stringify(
+        {
+          sessions: {
+            s1: { server: 'local', url: 'http://localhost:4096' },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     assert.equal(countSessionsForServer('absent', sessionsPath), 0);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: countSessionsForServer returns 0 when sessions.json does not exist', () => {
@@ -212,7 +248,9 @@ test('MULTI-11: countSessionsForServer returns 0 when sessions.json does not exi
   try {
     const sessionsPath = join(dir, 'sessions.json');
     assert.equal(countSessionsForServer('local', sessionsPath), 0);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: listServers shows CAPACITY column header and unlimited for uncapped server', () => {
@@ -225,19 +263,26 @@ test('MULTI-11: listServers shows CAPACITY column header and unlimited for uncap
     assert.equal(res.status, 0);
     assert.ok(res.stdout.includes('CAPACITY'), `stdout missing CAPACITY column, was: ${res.stdout}`);
     assert.ok(res.stdout.includes('unlimited'), `stdout missing 'unlimited', was: ${res.stdout}`);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('MULTI-11: listServers shows numeric capacity for capped server', () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'servers.json');
-    addServer({ name: 'capped', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3', maxSessions: 3 }, regPath);
+    addServer(
+      { name: 'capped', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3', maxSessions: 3 },
+      regPath,
+    );
     const driver = `import('${pathToFileURL(REGISTRY_BUILD).href}').then(m => m.listServers('${regPath}'));`;
     const res = runDriver(driver);
     assert.equal(res.status, 0);
     assert.ok(res.stdout.includes('3'), `stdout missing '3', was: ${res.stdout}`);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('addServer throws on host:port conflict with a differently-named server', () => {
@@ -253,7 +298,9 @@ test('addServer throws on host:port conflict with a differently-named server', (
     const reg = readRegistry(regPath);
     assert.equal(reg.servers.length, 1);
     assert.equal(reg.servers[0].name, 'alpha');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('addServer allows updating a server to the same host:port (same name is not a conflict)', () => {
@@ -261,12 +308,14 @@ test('addServer allows updating a server to the same host:port (same name is not
   try {
     const regPath = join(dir, 'servers.json');
     addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3' }, regPath);
-    assert.doesNotThrow(
-      () => addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3-turbo' }, regPath),
+    assert.doesNotThrow(() =>
+      addServer({ name: 'alpha', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3-turbo' }, regPath),
     );
     const reg = readRegistry(regPath);
     assert.equal(reg.servers[0].modelID, 'qwen3-turbo');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── legate-8jm: URL-format + lookup helpers ─────────────────────────────────
@@ -284,7 +333,9 @@ test('legate-8jm: findServerByName returns the matching entry or undefined', () 
     addServer({ name: 'b', host: 'hb', port: 2, providerID: 'vllm', modelID: 'm' }, regPath);
     assert.equal(findServerByName('b', regPath)?.host, 'hb');
     assert.equal(findServerByName('nope', regPath), undefined);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('legate-8jm: findServerByUrl matches on the canonical http://host:port', () => {
@@ -294,7 +345,9 @@ test('legate-8jm: findServerByUrl matches on the canonical http://host:port', ()
     addServer({ name: 'a', host: 'ha', port: 4096, providerID: 'vllm', modelID: 'm' }, regPath);
     assert.equal(findServerByUrl('http://ha:4096', regPath)?.name, 'a');
     assert.equal(findServerByUrl('http://ha:9999', regPath), undefined);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('legate-8jm: firstServer returns the first entry or undefined when empty', () => {
@@ -305,7 +358,9 @@ test('legate-8jm: firstServer returns the first entry or undefined when empty', 
     addServer({ name: 'a', host: 'ha', port: 1, providerID: 'vllm', modelID: 'm' }, regPath);
     addServer({ name: 'b', host: 'hb', port: 2, providerID: 'vllm', modelID: 'm' }, regPath);
     assert.equal(firstServer(regPath)?.name, 'a');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── legate-8jm: readRegistry entry validation (skip-on-malformed) ────────────
@@ -313,7 +368,9 @@ test('legate-8jm: firstServer returns the first entry or undefined when empty', 
 function captureStderr<T>(fn: () => T): { result: T; stderr: string } {
   const original = console.error;
   let stderr = '';
-  console.error = (...args: unknown[]) => { stderr += args.map(String).join(' ') + '\n'; };
+  console.error = (...args: unknown[]) => {
+    stderr += args.map(String).join(' ') + '\n';
+  };
   try {
     return { result: fn(), stderr };
   } finally {
@@ -326,35 +383,53 @@ test('legate-8jm: readRegistry skips a malformed entry (bad port) and keeps vali
   try {
     const regPath = join(dir, 'servers.json');
     // Hand-edited registry: one good entry, one with a string port (invalid).
-    writeFileSync(regPath, JSON.stringify({
-      servers: [
-        { name: 'good', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'm' },
-        { name: 'bad', host: 'localhost', port: 'not-a-number', providerID: 'vllm', modelID: 'm' },
-      ],
-    }, null, 2) + '\n');
+    writeFileSync(
+      regPath,
+      JSON.stringify(
+        {
+          servers: [
+            { name: 'good', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'm' },
+            { name: 'bad', host: 'localhost', port: 'not-a-number', providerID: 'vllm', modelID: 'm' },
+          ],
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     const { result, stderr } = captureStderr(() => readRegistry(regPath));
     assert.equal(result.servers.length, 1, 'only the valid entry should survive');
     assert.equal(result.servers[0].name, 'good');
     assert.ok(stderr.includes('Skipping malformed registry entry'), `should warn: ${stderr}`);
     assert.ok(stderr.includes('bad'), `warning should name the bad entry: ${stderr}`);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('legate-8jm: readRegistry skips an entry missing name/host and reports (unnamed)', () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'servers.json');
-    writeFileSync(regPath, JSON.stringify({
-      servers: [
-        { host: 'localhost', port: 4096 }, // no name
-        { name: 'ok', host: 'localhost', port: 4097, providerID: 'vllm', modelID: 'm' },
-      ],
-    }, null, 2) + '\n');
+    writeFileSync(
+      regPath,
+      JSON.stringify(
+        {
+          servers: [
+            { host: 'localhost', port: 4096 }, // no name
+            { name: 'ok', host: 'localhost', port: 4097, providerID: 'vllm', modelID: 'm' },
+          ],
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     const { result, stderr } = captureStderr(() => readRegistry(regPath));
     assert.equal(result.servers.length, 1);
     assert.equal(result.servers[0].name, 'ok');
     assert.ok(stderr.includes('(unnamed)'), `nameless entry should be reported as (unnamed): ${stderr}`);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('legate-8jm: readRegistry keeps sparse-but-routable entries (no providerID/modelID)', () => {
@@ -362,27 +437,36 @@ test('legate-8jm: readRegistry keeps sparse-but-routable entries (no providerID/
   try {
     const regPath = join(dir, 'servers.json');
     // Only routing fields present — must still be usable (providerID/modelID are lenient).
-    writeFileSync(regPath, JSON.stringify({
-      servers: [{ name: 'sparse', host: 'localhost', port: 4096 }],
-    }, null, 2) + '\n');
+    writeFileSync(
+      regPath,
+      JSON.stringify(
+        {
+          servers: [{ name: 'sparse', host: 'localhost', port: 4096 }],
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     const reg = readRegistry(regPath);
     assert.equal(reg.servers.length, 1);
     assert.equal(reg.servers[0].name, 'sparse');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('legate-8jm: isValidServerEntry (guard) agrees with ServerEntrySchema (zod mirror)', () => {
   const cases: unknown[] = [
     { name: 'a', host: 'h', port: 4096, providerID: 'vllm', modelID: 'm' }, // valid full
-    { name: 'a', host: 'h', port: 4096 },                                    // valid sparse
-    { name: 'a', host: 'h', port: 4096, maxSessions: 3 },                    // valid capped
-    { name: '', host: 'h', port: 4096 },                                     // empty name
-    { name: 'a', host: '', port: 4096 },                                     // empty host
-    { name: 'a', host: 'h', port: 'x' },                                     // non-number port
-    { name: 'a', host: 'h', port: 0 },                                       // non-positive port
-    { name: 'a', host: 'h', port: 4096.5 },                                  // non-integer port
-    { name: 'a', host: 'h', port: 4096, providerID: 5 },                     // wrong providerID type
-    { host: 'h', port: 4096 },                                              // missing name
+    { name: 'a', host: 'h', port: 4096 }, // valid sparse
+    { name: 'a', host: 'h', port: 4096, maxSessions: 3 }, // valid capped
+    { name: '', host: 'h', port: 4096 }, // empty name
+    { name: 'a', host: '', port: 4096 }, // empty host
+    { name: 'a', host: 'h', port: 'x' }, // non-number port
+    { name: 'a', host: 'h', port: 0 }, // non-positive port
+    { name: 'a', host: 'h', port: 4096.5 }, // non-integer port
+    { name: 'a', host: 'h', port: 4096, providerID: 5 }, // wrong providerID type
+    { host: 'h', port: 4096 }, // missing name
     null,
     'not-an-object',
   ];
@@ -401,7 +485,9 @@ test('legate-8jm: readRegistry still throws on a totally malformed top-level sha
     const regPath = join(dir, 'servers.json');
     writeFileSync(regPath, JSON.stringify({ notServers: 1 }) + '\n');
     assert.throws(() => readRegistry(regPath), /malformed registry|could not parse/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── Migration guard regression tests (legate-5di) ───────────────────────────
@@ -420,7 +506,10 @@ test('_runRegistryMigration copies old dir when target servers.json absent, even
     // Simulate: old ~/.config/prefect/ with a servers.json
     const oldDir = join(root, 'prefect');
     mkdirSync(oldDir);
-    writeFileSync(join(oldDir, 'servers.json'), JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }));
+    writeFileSync(
+      join(oldDir, 'servers.json'),
+      JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }),
+    );
 
     _runRegistryMigration(newPath, oldDir);
 
@@ -439,17 +528,26 @@ test('_runRegistryMigration skips copy when target servers.json already exists (
     const newPath = join(newDir, 'servers.json');
     mkdirSync(newDir);
     // Target servers.json already present — migration must not overwrite
-    writeFileSync(newPath, JSON.stringify({ servers: [{ name: 'existing', host: 'h', port: 2, providerID: 'vllm', modelID: 'qwen3' }] }));
+    writeFileSync(
+      newPath,
+      JSON.stringify({ servers: [{ name: 'existing', host: 'h', port: 2, providerID: 'vllm', modelID: 'qwen3' }] }),
+    );
 
     const oldDir = join(root, 'prefect');
     mkdirSync(oldDir);
-    writeFileSync(join(oldDir, 'servers.json'), JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }));
+    writeFileSync(
+      join(oldDir, 'servers.json'),
+      JSON.stringify({ servers: [{ name: 'old', host: 'h', port: 1, providerID: 'vllm', modelID: 'qwen3' }] }),
+    );
 
     _runRegistryMigration(newPath, oldDir);
 
     const after = JSON.parse(readFileSync(newPath, 'utf8'));
     assert.equal(after.servers[0].name, 'existing', 'existing entry should be preserved');
-    assert.ok(!after.servers.some((s: { name: string }) => s.name === 'old'), 'old entry should NOT have been merged in');
+    assert.ok(
+      !after.servers.some((s: { name: string }) => s.name === 'old'),
+      'old entry should NOT have been merged in',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

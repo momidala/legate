@@ -18,8 +18,16 @@ import { capDiffResponse, maxResponseChars } from '../response-cap.js';
 
 export function registerCore(server: McpServer, ctx: ServerContext): void {
   const {
-    BASE_URL, TIMEOUT_MS, getClient, resolveServerUrl,
-    okJson, okText, errText, staleSessionMessage, handleNotFound, staleErrorResponse,
+    BASE_URL,
+    TIMEOUT_MS,
+    getClient,
+    resolveServerUrl,
+    okJson,
+    okText,
+    errText,
+    staleSessionMessage,
+    handleNotFound,
+    staleErrorResponse,
     registerSessionTool,
   } = ctx;
 
@@ -27,14 +35,29 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
   server.registerTool(
     'legate_create_session',
     {
-      description: 'Create a new OpenCode coding session. Returns the Session object including the session id (ULID) used by all other tools. Pass directory to pin the session to a specific project root — required when OpenCode serves multiple projects from a single running instance.',
+      description:
+        'Create a new OpenCode coding session. Returns the Session object including the session id (ULID) used by all other tools. Pass directory to pin the session to a specific project root — required when OpenCode serves multiple projects from a single running instance.',
       inputSchema: z.object({
         title: z.string().optional().describe('Optional display title for the session'),
-        parentID: z.string().optional().describe('Optional parent session ID — creates this session as a child of the given parent for hierarchy tracking.'),
-        directory: z.string().optional().describe('Absolute path to the project root for this session. Defaults to the directory OpenCode was started from.'),
-        server: z.string().min(1).optional().describe(
-          "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
-        ),
+        parentID: z
+          .string()
+          .optional()
+          .describe(
+            'Optional parent session ID — creates this session as a child of the given parent for hierarchy tracking.',
+          ),
+        directory: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute path to the project root for this session. Defaults to the directory OpenCode was started from.',
+          ),
+        server: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL.',
+          ),
       }),
     },
     async ({ title, parentID, directory, server: serverParam }) => {
@@ -46,7 +69,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // CORE-07: Abort a running session
@@ -60,11 +83,18 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         'Specify `server` to target a known server, or omit to fan out to all registered servers.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID returned from legate_create_session'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
-        server: z.string().min(1).optional().describe(
-          'Server name (from registry) to target when the session is not in local sessions.json. ' +
-          'If omitted and the session is unknown locally, all registered servers are tried.',
-        ),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        server: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Server name (from registry) to target when the session is not in local sessions.json. ' +
+              'If omitted and the session is unknown locally, all registered servers are tried.',
+          ),
       }),
     },
     async ({ sessionId, directory, server: serverParam }) => {
@@ -103,9 +133,10 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
           }
           targets = [{ name: found.name, url: toServerUrl(found) }];
         } else {
-          targets = reg.servers.length > 0
-            ? reg.servers.map((s) => ({ name: s.name, url: toServerUrl(s) }))
-            : [{ name: 'default', url: BASE_URL }];
+          targets =
+            reg.servers.length > 0
+              ? reg.servers.map((s) => ({ name: s.name, url: toServerUrl(s) }))
+              : [{ name: 'default', url: BASE_URL }];
         }
 
         const misses: string[] = [];
@@ -116,10 +147,15 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
               query: dir ? { directory: dir } : undefined,
             });
             if (error) {
-              if (isNotFound(error)) { misses.push(`${target.name} (${target.url}): not found`); continue; }
+              if (isNotFound(error)) {
+                misses.push(`${target.name} (${target.url}): not found`);
+                continue;
+              }
               throw apiError(error);
             }
-            return okText(`Aborted zombie session ${sessionId} on server '${target.name}' (${target.url}). Result: ${String(data)}`);
+            return okText(
+              `Aborted zombie session ${sessionId} on server '${target.name}' (${target.url}). Result: ${String(data)}`,
+            );
           } catch (err) {
             misses.push(`${target.name} (${target.url}): ${String(err)}`);
           }
@@ -127,13 +163,14 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
 
         throw new Error(
           `Session ${sessionId} not found in sessions.json and abort failed on all tried servers:\n` +
-          misses.map((m) => `  • ${m}`).join('\n') + '\n' +
-          `The session may have already been deleted. Verify with: curl -s http://<host>:<port>/session/status`,
+            misses.map((m) => `  • ${m}`).join('\n') +
+            '\n' +
+            `The session may have already been deleted. Verify with: curl -s http://<host>:<port>/session/status`,
         );
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // CORE-02 + RUN-01/02/03 + INFRA-01 + SURF-02:
@@ -150,14 +187,33 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         'Send a prompt to an OpenCode session and block until the agent finishes. Returns { info: AssistantMessage, parts: Part[] } as JSON. Optional model/agent/system override the session defaults for this single call. May take seconds to minutes depending on task complexity.',
       // legate-0ys(a): the 8 override fields + the agent/agentInput XOR refine are shared
       // with legate_prompt_async via ../schemas.ts (spread + refine — one definition).
-      inputSchema: z.object({
-        sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
-        prompt: z.string().describe('The coding task or instruction to send'),
-        directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
-        ...promptOverrideFields,
-      }).refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
+      inputSchema: z
+        .object({
+          sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
+          prompt: z.string().describe('The coding task or instruction to send'),
+          directory: z
+            .string()
+            .optional()
+            .describe(
+              "Routes this call to the OpenCode project at the specified path. Does not change the session's working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.",
+            ),
+          ...promptOverrideFields,
+        })
+        .refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
     },
-    async ({ sessionId, prompt, directory, model, agent, system, tools, files, messageID, agentInput, subtaskInput }) => {
+    async ({
+      sessionId,
+      prompt,
+      directory,
+      model,
+      agent,
+      system,
+      tools,
+      files,
+      messageID,
+      agentInput,
+      subtaskInput,
+    }) => {
       const dir = resolveDirectory(directory);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -165,7 +221,14 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         const serverUrl = resolveServerUrl(sessionId);
         const stored = lookupSession(sessionId)?.model;
         const effectiveModel = model ?? (stored?.providerID && stored?.modelID ? stored : undefined);
-        const result = await runPrompt(getClient(serverUrl), sessionId, prompt, { model: effectiveModel, agent, system, tools, files, messageID, agentInput, subtaskInput }, dir, controller.signal);
+        const result = await runPrompt(
+          getClient(serverUrl),
+          sessionId,
+          prompt,
+          { model: effectiveModel, agent, system, tools, files, messageID, agentInput, subtaskInput },
+          dir,
+          controller.signal,
+        );
         clearTimeout(timer);
         // Grace delay: OpenCode's status map updates asynchronously after the stream closes.
         // Poll for up to 2s so that a legate_session_status call immediately after legate_run
@@ -180,12 +243,16 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
             if (!statusEntry || statusEntry.type !== 'busy') break;
             await new Promise<void>((r) => setTimeout(r, 250));
           }
-        } catch { /* best-effort — never block the return on status lag */ }
+        } catch {
+          /* best-effort — never block the return on status lag */
+        }
         return okJson(result);
       } catch (err) {
         clearTimeout(timer);
         if ((err as Error).name === 'AbortError') {
-          return errText(`legate_run timed out after ${TIMEOUT_MS / 1000}s — check LEGATE_SERVER_URL and model endpoint`);
+          return errText(
+            `legate_run timed out after ${TIMEOUT_MS / 1000}s — check LEGATE_SERVER_URL and model endpoint`,
+          );
         }
         // D-12 stale-session detection — runPrompt throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
@@ -193,7 +260,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         }
         return errText(err);
       }
-    }
+    },
   );
 
   // RUN-04: Fire-and-forget prompt — POST /session/:id/prompt_async returns 204 void.
@@ -206,12 +273,19 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       description:
         'Send a prompt to an OpenCode session and return immediately without waiting for the agent to finish. Returns { sessionId, accepted: true } on success. Use legate_session_status to poll for completion, then legate_session_messages or legate_get_diff to retrieve results.',
       // legate-0ys(a): identical override fields + refine as legate_run, shared via ../schemas.ts.
-      inputSchema: z.object({
-        sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
-        prompt: z.string().describe('The coding task or instruction to send'),
-        directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
-        ...promptOverrideFields,
-      }).refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
+      inputSchema: z
+        .object({
+          sessionId: z.string().min(1).describe('Session ID from legate_create_session'),
+          prompt: z.string().describe('The coding task or instruction to send'),
+          directory: z
+            .string()
+            .optional()
+            .describe(
+              "Routes this call to the OpenCode project at the specified path. Does not change the session's working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.",
+            ),
+          ...promptOverrideFields,
+        })
+        .refine(agentXorRefineCheck, { message: agentXorRefineMessage }),
     },
     async ({ client, serverUrl, dir, args }) => {
       const { sessionId, prompt, model, agent, system, tools, files, messageID, agentInput, subtaskInput } = args;
@@ -234,18 +308,22 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return { sessionId, accepted: true };
-    }
+    },
   );
 
   // CORE-03: Get the file diff for a session (or for a specific message)
   server.registerTool(
     'legate_get_diff',
     {
-      description: 'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), it is capped: before/after content is dropped and patch strings are truncated, and the result becomes { truncated: true, files: [...] }.',
+      description:
+        'Get the file diff for an OpenCode session. Returns an array of FileDiff objects (file, before, after, additions, deletions). If messageID is provided, returns the diff for that message; otherwise returns the diff for the session. When the response would exceed LEGATE_MAX_RESPONSE_CHARS characters (default 400000), it is capped: before/after content is dropped and patch strings are truncated, and the result becomes { truncated: true, files: [...] }.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         messageID: z.string().optional().describe('Optional message ID to scope the diff to a single message'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ sessionId, messageID, directory }) => {
@@ -262,7 +340,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         }
         return errText(err);
       }
-    }
+    },
   );
 
   // CORE-04: Respond to an OpenCode permission request
@@ -271,14 +349,18 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
   registerSessionTool(
     'legate_approve_permission',
     {
-      description: 'Respond to an OpenCode permission request. once = approve this request only; always = approve similar future requests; reject = deny.',
+      description:
+        'Respond to an OpenCode permission request. once = approve this request only; always = approve similar future requests; reject = deny.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         permissionId: z.string().describe('Permission request ID'),
-        response: z.enum(['once', 'always', 'reject']).describe(
-          'once = approve this request only; always = approve similar future requests; reject = deny'
-        ),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        response: z
+          .enum(['once', 'always', 'reject'])
+          .describe('once = approve this request only; always = approve similar future requests; reject = deny'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -291,18 +373,25 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 
   // CORE-05: Fork a session (escape hatch for corrupted sessions)
   server.registerTool(
     'legate_fork',
     {
-      description: 'Fork an OpenCode session, optionally at a specific message. Returns a new Session. Use this as an escape hatch when a session has gone off the rails.',
+      description:
+        'Fork an OpenCode session, optionally at a specific message. Returns a new Session. Use this as an escape hatch when a session has gone off the rails.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to fork from'),
-        messageID: z.string().optional().describe('Optional message ID to fork at; if omitted, forks at the current tip'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        messageID: z
+          .string()
+          .optional()
+          .describe('Optional message ID to fork at; if omitted, forks at the current tip'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ sessionId, messageID, directory }) => {
@@ -337,19 +426,23 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // CORE-06: Revert a session to a prior message
   registerSessionTool(
     'legate_revert',
     {
-      description: 'Revert an OpenCode session to a prior message. messageID is required. Optionally scope to a specific part of that message via partID.',
+      description:
+        'Revert an OpenCode session to a prior message. messageID is required. Optionally scope to a specific part of that message via partID.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID'),
         messageID: z.string().describe('Required: message ID to revert to'),
         partID: z.string().optional().describe('Optional: specific part within the message'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
       }),
     },
     async ({ client, serverUrl, dir, args }) => {
@@ -361,6 +454,6 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       });
       if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
-    }
+    },
   );
 }

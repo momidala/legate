@@ -10,10 +10,7 @@ import { apiError, OpenCodeApiError, isNotFound } from '../errors.js';
 import { validateParts } from '../parts.js';
 
 export function registerComposites(server: McpServer, ctx: ServerContext): void {
-  const {
-    TIMEOUT_MS, getClient, resolveServerUrl,
-    okJson, errText, handleNotFound, staleErrorResponse,
-  } = ctx;
+  const { TIMEOUT_MS, getClient, resolveServerUrl, okJson, errText, handleNotFound, staleErrorResponse } = ctx;
 
   // WORKFLOW-01 + WORKFLOW-02: Blocking composite — createSession → runPrompt → getDiff.
   // Returns { sessionId, result, diff } in one call, replicating the canonical three-step loop.
@@ -30,21 +27,31 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         'On timeout (LEGATE_TIMEOUT_MS exceeded): aborts the in-flight run (both new and reused sessions) and returns isError:true — session itself is kept alive. ' +
         'Note: does not support tools/files/messageID/agentInput/subtaskInput — use legate_create_session + legate_run directly for those features.',
       inputSchema: z.object({
-        sessionId: z.string().optional().describe(
-          'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
-        ),
+        sessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.',
+          ),
         prompt: z.string().describe('The coding task or instruction to execute'),
         title: z.string().optional().describe('Optional display title for the created session'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
         model: z
           .object({ providerID: z.string(), modelID: z.string() })
           .optional()
           .describe('Override the model for this call. Both providerID and modelID required together.'),
         agent: z.string().optional().describe('Override the agent for this call.'),
         system: z.string().optional().describe('Override the system prompt for this call.'),
-        server: z.string().min(1).optional().describe(
-          "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
-        ),
+        server: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL.',
+          ),
       }),
     },
     async ({ sessionId: providedSessionId, prompt, title, directory, model, agent, system, server: serverParam }) => {
@@ -56,20 +63,35 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         const sessionEntry = lookupSession(providedSessionId);
         if (!sessionEntry) {
           clearTimeout(timer);
-          return errText(`Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`);
+          return errText(
+            `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`,
+          );
         }
         try {
           const serverUrl = sessionEntry.url;
           const c = getClient(serverUrl);
-          const result = await runPrompt(c, providedSessionId, prompt, { model, agent, system }, undefined, controller.signal);
+          const result = await runPrompt(
+            c,
+            providedSessionId,
+            prompt,
+            { model, agent, system },
+            undefined,
+            controller.signal,
+          );
           clearTimeout(timer);
           const diff = await getDiff(c, providedSessionId, undefined, undefined);
           return okJson({ sessionId: providedSessionId, result, diff });
         } catch (err) {
           clearTimeout(timer);
           if ((err as Error).name === 'AbortError') {
-            try { await getClient(sessionEntry.url).session.abort({ path: { id: providedSessionId } }); } catch { /* swallow */ }
-            return errText(`legate_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted`);
+            try {
+              await getClient(sessionEntry.url).session.abort({ path: { id: providedSessionId } });
+            } catch {
+              /* swallow */
+            }
+            return errText(
+              `legate_delegate timed out after ${TIMEOUT_MS / 1000}s — session ${providedSessionId} run aborted`,
+            );
           }
           return errText(err);
         }
@@ -91,13 +113,19 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         if ((err as Error).name === 'AbortError') {
           // sessionId may be undefined if abort fired during createSession
           if (sessionId) {
-            try { await getClient(resolveServerUrl(sessionId)).session.abort({ path: { id: sessionId } }); } catch { /* swallow */ }
+            try {
+              await getClient(resolveServerUrl(sessionId)).session.abort({ path: { id: sessionId } });
+            } catch {
+              /* swallow */
+            }
           }
-          return errText(`legate_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}`);
+          return errText(
+            `legate_delegate timed out after ${TIMEOUT_MS / 1000}s${sessionId ? ` — session ${sessionId} aborted` : ' — during session creation'}`,
+          );
         }
         return errText(err);
       }
-    }
+    },
   );
 
   // WORKFLOW-03: Non-blocking composite — createSession → promptAsync → return { sessionId }.
@@ -113,21 +141,31 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         'Use legate_await to poll for completion or legate_inspect to check status. ' +
         'Note: does not support tools/files/messageID/agentInput/subtaskInput — use legate_create_session + legate_prompt_async directly for those features.',
       inputSchema: z.object({
-        sessionId: z.string().optional().describe(
-          'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.'
-        ),
+        sessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Reuse an existing session. When provided: server/title/directory are ignored; the session runs on its already-registered server. model/agent/system still apply as per-prompt overrides.',
+          ),
         prompt: z.string().describe('The coding task or instruction to execute'),
         title: z.string().optional().describe('Optional display title for the created session'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
         model: z
           .object({ providerID: z.string(), modelID: z.string() })
           .optional()
           .describe('Override the model for this call. Both providerID and modelID required together.'),
         agent: z.string().optional().describe('Override the agent for this call.'),
         system: z.string().optional().describe('Override the system prompt for this call.'),
-        server: z.string().min(1).optional().describe(
-          "Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL."
-        ),
+        server: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Named server from registry (legate list-servers). Omit to use the first registered server or LEGATE_SERVER_URL.',
+          ),
       }),
     },
     async ({ sessionId: providedSessionId, prompt, title, directory, model, agent, system, server: serverParam }) => {
@@ -135,7 +173,9 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         // D-09: reuse path — skip createSession; server/directory/title ignored
         const sessionEntry = lookupSession(providedSessionId);
         if (!sessionEntry) {
-          return errText(`Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`);
+          return errText(
+            `Session '${providedSessionId}' not found in sessions registry. It may have been cleared or registered on a different MCP instance. Call legate_session_list to see active sessions.`,
+          );
         }
         try {
           const serverUrl = sessionEntry.url;
@@ -177,7 +217,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // WORKFLOW-04: Compact snapshot — { status, todos, changedFiles }.
@@ -191,7 +231,10 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         'Return a compact snapshot { status, todos, changedFiles } for a session. Faster than fetching full message history. changedFiles contains { file, additions, deletions } — use legate_get_diff for full patch content.',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID to inspect'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       }),
     },
     async ({ sessionId, directory }) => {
@@ -222,7 +265,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
       } catch (err) {
         return errText(err);
       }
-    }
+    },
   );
 
   // WORKFLOW-05 + WORKFLOW-06: Poll session.status() until the session's type is "idle",
@@ -238,9 +281,22 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         'Poll a dispatched session until it reaches idle state, then return { result: { info, parts }, diff }. Use after legate_dispatch. Accepts pollIntervalMs (default 2000) and timeoutMs (default LEGATE_TIMEOUT_MS).',
       inputSchema: z.object({
         sessionId: z.string().min(1).describe('Session ID from legate_dispatch'),
-        pollIntervalMs: z.number().int().positive().optional().describe('Milliseconds between status polls. Default: 2000.'),
-        timeoutMs: z.number().int().positive().optional().describe('Maximum milliseconds to wait. Default: LEGATE_TIMEOUT_MS env var (default 120000).'),
-        directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
+        pollIntervalMs: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Milliseconds between status polls. Default: 2000.'),
+        timeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Maximum milliseconds to wait. Default: LEGATE_TIMEOUT_MS env var (default 120000).'),
+        directory: z
+          .string()
+          .optional()
+          .describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
       }),
     },
     async ({ sessionId, pollIntervalMs = 2000, timeoutMs = TIMEOUT_MS, directory }) => {
@@ -264,7 +320,9 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         const STALE_BUSY_THRESHOLD = 5;
         let staleBusyCount = 0;
         while (true) {
-          const { data, error } = await getClient(serverUrl).session.status({ query: dir ? { directory: dir } : undefined });
+          const { data, error } = await getClient(serverUrl).session.status({
+            query: dir ? { directory: dir } : undefined,
+          });
           if (error) throw apiError(error);
           const statusEntry = (data as Record<string, { type: string }>)[sessionId];
           // Treat undefined (session not in map) as idle — may have completed before first poll
@@ -272,11 +330,18 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
           if (statusEntry.type === 'busy') {
             staleBusyCount++;
             if (staleBusyCount >= STALE_BUSY_THRESHOLD) {
-              const msgResult = await getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined });
+              const msgResult = await getClient(serverUrl).session.messages({
+                path: { id: sessionId },
+                query: dir ? { directory: dir } : undefined,
+              });
               if (!msgResult.error && Array.isArray(msgResult.data) && msgResult.data.length > 0) {
-                const lastMsg = msgResult.data[msgResult.data.length - 1] as { info: { role?: string; time?: { completed?: number } } };
+                const lastMsg = msgResult.data[msgResult.data.length - 1] as {
+                  info: { role?: string; time?: { completed?: number } };
+                };
                 if (lastMsg.info.role === 'assistant' && lastMsg.info.time?.completed !== undefined) {
-                  console.error(`[Legate] legate_await: breaking on stale busy — last message is a completed assistant message after ${staleBusyCount} busy polls (session ${sessionId})`);
+                  console.error(
+                    `[Legate] legate_await: breaking on stale busy — last message is a completed assistant message after ${staleBusyCount} busy polls (session ${sessionId})`,
+                  );
                   break;
                 }
               }
@@ -287,7 +352,12 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
           }
           if (Date.now() >= deadline) {
             return {
-              content: [{ type: 'text', text: JSON.stringify({ error: `legate_await timed out after ${timeoutMs}ms`, sessionId }) }],
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: `legate_await timed out after ${timeoutMs}ms`, sessionId }),
+                },
+              ],
               isError: true,
             };
           }
@@ -295,7 +365,10 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         }
         // Reconstruct result from messages (last assistant message) and full diff
         const [messagesResult, diff] = await Promise.all([
-          getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
+          getClient(serverUrl).session.messages({
+            path: { id: sessionId },
+            query: dir ? { directory: dir } : undefined,
+          }),
           getDiff(getClient(serverUrl), sessionId, undefined, dir),
         ]);
         if (messagesResult.error) await handleNotFound(messagesResult.error, sessionId, serverUrl);
@@ -306,7 +379,10 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         // legate-ngl: honest per-element validation; partsDropped surfaced only when > 0.
         const { parts: validatedParts, dropped } = validateParts(last.parts, 'legate_await');
         // D-13: return shape matches legate_delegate for easy substitution
-        return okJson({ result: { info: last.info, parts: validatedParts, ...(dropped ? { partsDropped: dropped } : {}) }, diff });
+        return okJson({
+          result: { info: last.info, parts: validatedParts, ...(dropped ? { partsDropped: dropped } : {}) },
+          diff,
+        });
       } catch (err) {
         // D-12 stale-session detection — getDiff/status throw OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
@@ -314,6 +390,6 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         }
         return errText(err);
       }
-    }
+    },
   );
 }

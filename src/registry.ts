@@ -9,7 +9,7 @@ export interface ServerEntry {
   port: number;
   providerID: string;
   modelID: string;
-  maxSessions?: number;   // optional — undefined means unlimited; persisted only when set
+  maxSessions?: number; // optional — undefined means unlimited; persisted only when set
 }
 
 export interface Registry {
@@ -126,13 +126,11 @@ export function writeRegistry(reg: Registry, registryPath: string = REGISTRY_PAT
 
 export function addServer(entry: ServerEntry, registryPath: string = REGISTRY_PATH): void {
   const reg = readRegistry(registryPath);
-  const conflict = reg.servers.find(
-    (s) => s.host === entry.host && s.port === entry.port && s.name !== entry.name,
-  );
+  const conflict = reg.servers.find((s) => s.host === entry.host && s.port === entry.port && s.name !== entry.name);
   if (conflict) {
     throw new Error(
       `Host/port conflict: '${conflict.name}' is already registered at ${entry.host}:${entry.port}. ` +
-      `Each server must have a unique host:port combination.`,
+        `Each server must have a unique host:port combination.`,
     );
   }
   const existing = reg.servers.findIndex((s) => s.name === entry.name);
@@ -164,8 +162,15 @@ export function listServers(registryPath: string = REGISTRY_PATH): void {
   }
   console.log('NAME            HOST            PORT   PROVIDER        MODEL            CAPACITY');
   console.log('----            ----            ----   --------        -----            --------');
-  const cell = (s: string, w: number): string => s.length > w - 1 ? s.slice(0, w - 4) + '...' : s.padEnd(w);
+  const cell = (s: string, w: number): string => (s.length > w - 1 ? s.slice(0, w - 4) + '...' : s.padEnd(w));
   for (const s of reg.servers) {
-    console.log(cell(s.name, 16) + cell(s.host, 16) + cell(String(s.port), 7) + cell(s.providerID ?? '', 16) + cell(s.modelID ?? '', 17) + (s.maxSessions != null ? String(s.maxSessions) : 'unlimited'));
+    console.log(
+      cell(s.name, 16) +
+        cell(s.host, 16) +
+        cell(String(s.port), 7) +
+        cell(s.providerID ?? '', 16) +
+        cell(s.modelID ?? '', 17) +
+        (s.maxSessions != null ? String(s.maxSessions) : 'unlimited'),
+    );
   }
 }

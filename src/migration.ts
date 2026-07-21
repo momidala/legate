@@ -21,6 +21,10 @@ import { existsSync, cpSync } from 'node:fs';
 export function migrateIfNeeded(sentinelFile: string, oldDir: string, newDir: string): void {
   if (!existsSync(sentinelFile) && existsSync(oldDir)) {
     // Preserve prior semantics: copy even when newDir already exists (cpSync merges).
-    try { cpSync(oldDir, newDir, { recursive: true }); } catch { /* non-fatal */ }
+    try {
+      cpSync(oldDir, newDir, { recursive: true });
+    } catch {
+      /* non-fatal */
+    }
   }
 }

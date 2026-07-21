@@ -83,8 +83,8 @@ test('RENAME-03: every registerTool call site uses the legate_ prefix (no unclas
     legate.length + prefect.length,
     totalCalls,
     `Expected every registration call site's name to start with legate_ or prefect_, ` +
-    `but found ${totalCalls} call sites and only classified ${legate.length + prefect.length} ` +
-    `(${legate.length} legate_ + ${prefect.length} prefect_). Some tool name does not match either prefix.`,
+      `but found ${totalCalls} call sites and only classified ${legate.length + prefect.length} ` +
+      `(${legate.length} legate_ + ${prefect.length} prefect_). Some tool name does not match either prefix.`,
   );
   assert.equal(
     prefect.length,

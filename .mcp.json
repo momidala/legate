@@ -3,9 +3,7 @@
     "legate": {
       "type": "stdio",
       "command": "node",
-      "args": [
-        "build/index.js"
-      ]
+      "args": ["build/index.js"]
     }
   }
 }

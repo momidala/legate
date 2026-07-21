@@ -56,12 +56,15 @@ test('legate-e1i: resolveServerUrl — serverName hit returns the registry URL (
   try {
     const sPath = join(dir, 'sessions.json');
     const rPath = join(dir, 'servers.json');
-    writeRegistry({
-      servers: [
-        { name: 'lab', host: 'labhost', port: 4097, providerID: 'vllm', modelID: 'qwen' },
-        { name: 'bee', host: 'beehost', port: 4098, providerID: 'ollama', modelID: 'qwen3-coder' },
-      ],
-    }, rPath);
+    writeRegistry(
+      {
+        servers: [
+          { name: 'lab', host: 'labhost', port: 4097, providerID: 'vllm', modelID: 'qwen' },
+          { name: 'bee', host: 'beehost', port: 4098, providerID: 'ollama', modelID: 'qwen3-coder' },
+        ],
+      },
+      rPath,
+    );
     const url = resolveServerUrl(undefined, 'bee', BASE, sPath, rPath);
     assert.equal(url, 'http://beehost:4098');
   } finally {
@@ -74,9 +77,12 @@ test('legate-e1i: resolveServerUrl — serverName miss throws the exact not-foun
   try {
     const sPath = join(dir, 'sessions.json');
     const rPath = join(dir, 'servers.json');
-    writeRegistry({
-      servers: [{ name: 'lab', host: 'labhost', port: 4097, providerID: 'vllm', modelID: 'qwen' }],
-    }, rPath);
+    writeRegistry(
+      {
+        servers: [{ name: 'lab', host: 'labhost', port: 4097, providerID: 'vllm', modelID: 'qwen' }],
+      },
+      rPath,
+    );
     assert.throws(
       () => resolveServerUrl(undefined, 'ghost', BASE, sPath, rPath),
       (err: Error) => {
@@ -97,12 +103,15 @@ test('legate-e1i: resolveServerUrl — no inputs + non-empty registry returns th
   try {
     const sPath = join(dir, 'sessions.json');
     const rPath = join(dir, 'servers.json');
-    writeRegistry({
-      servers: [
-        { name: 'first', host: 'firsthost', port: 4096, providerID: 'vllm', modelID: 'qwen' },
-        { name: 'second', host: 'secondhost', port: 4097, providerID: 'vllm', modelID: 'qwen' },
-      ],
-    }, rPath);
+    writeRegistry(
+      {
+        servers: [
+          { name: 'first', host: 'firsthost', port: 4096, providerID: 'vllm', modelID: 'qwen' },
+          { name: 'second', host: 'secondhost', port: 4097, providerID: 'vllm', modelID: 'qwen' },
+        ],
+      },
+      rPath,
+    );
     const url = resolveServerUrl(undefined, undefined, BASE, sPath, rPath);
     assert.equal(url, 'http://firsthost:4096');
   } finally {

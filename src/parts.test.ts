@@ -1,11 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  PartSchema,
-  ToolStateSchema,
-  ApiErrorSchema,
-  validateParts,
-} from './parts.js';
+import { PartSchema, ToolStateSchema, ApiErrorSchema, validateParts } from './parts.js';
 
 const BASE = { id: 'p_01', sessionID: 'ses_01', messageID: 'msg_01' };
 
@@ -14,7 +9,11 @@ const BASE = { id: 'p_01', sessionID: 'ses_01', messageID: 'msg_01' };
 function silenceStderr<T>(fn: () => T): T {
   const original = console.error;
   console.error = () => {};
-  try { return fn(); } finally { console.error = original; }
+  try {
+    return fn();
+  } finally {
+    console.error = original;
+  }
 }
 
 test('legate-ngl: validateParts returns all parts and no dropped when every element is valid', () => {
@@ -30,22 +29,31 @@ test('legate-ngl: validateParts returns all parts and no dropped when every elem
 test('legate-ngl: validateParts salvages valid elements and counts the invalid ones', () => {
   const raw = [
     { ...BASE, type: 'text', text: 'keep me' },
-    { ...BASE, type: 'bogus' },          // invalid discriminator
+    { ...BASE, type: 'bogus' }, // invalid discriminator
     { ...BASE, type: 'agent', name: 'q' },
-    { nope: true },                       // not a part at all
+    { nope: true }, // not a part at all
   ];
   const { parts, dropped } = silenceStderr(() => validateParts(raw, 'test'));
   assert.equal(dropped, 2, 'two invalid elements dropped');
   assert.equal(parts.length, 2, 'two valid elements salvaged');
-  assert.deepEqual((parts as Array<{ type: string }>).map((p) => p.type), ['text', 'agent']);
+  assert.deepEqual(
+    (parts as Array<{ type: string }>).map((p) => p.type),
+    ['text', 'agent'],
+  );
 });
 
 test('legate-ngl: validateParts emits exactly one warning naming the source and counts', () => {
-  const raw = [{ ...BASE, type: 'text', text: 'ok' }, { ...BASE, type: 'bogus' }];
+  const raw = [
+    { ...BASE, type: 'text', text: 'ok' },
+    { ...BASE, type: 'bogus' },
+  ];
   let calls = 0;
   let captured = '';
   const original = console.error;
-  console.error = (...args: unknown[]) => { calls++; captured = args.map(String).join(' '); };
+  console.error = (...args: unknown[]) => {
+    calls++;
+    captured = args.map(String).join(' ');
+  };
   try {
     validateParts(raw, 'legate_await');
   } finally {
@@ -133,7 +141,10 @@ test('PartSchema rejects unknown discriminator', () => {
 test('ToolStateSchema discriminates on status (NOT type)', () => {
   assert.equal(ToolStateSchema.parse({ status: 'pending', input: {}, raw: '...' }).status, 'pending');
   assert.equal(ToolStateSchema.parse({ status: 'running', input: {}, time: { start: 1 } }).status, 'running');
-  assert.equal(ToolStateSchema.parse({ status: 'error', input: {}, error: 'boom', time: { start: 1, end: 2 } }).status, 'error');
+  assert.equal(
+    ToolStateSchema.parse({ status: 'error', input: {}, error: 'boom', time: { start: 1, end: 2 } }).status,
+    'error',
+  );
 });
 
 test('ApiErrorSchema requires name "APIError"', () => {

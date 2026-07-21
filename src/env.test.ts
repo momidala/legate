@@ -69,7 +69,11 @@ test('resolveEnv: a variable set but losing to an earlier name in the chain does
     const result = resolveEnv(NAMES);
     assert.equal(result, 'new-value');
   });
-  assert.equal(warnings.length, 0, `expected no warnings — OLD1/OLD2 never win the chain, got: ${JSON.stringify(warnings)}`);
+  assert.equal(
+    warnings.length,
+    0,
+    `expected no warnings — OLD1/OLD2 never win the chain, got: ${JSON.stringify(warnings)}`,
+  );
 });
 
 test('resolveEnv: returns undefined and warns nothing when no name is set', async () => {
@@ -142,7 +146,10 @@ test('resolveEnvInt: non-numeric value (NaN) warns and returns the default', asy
     assert.equal(result, 120_000);
   });
   assert.equal(warnings.length, 1);
-  assert.equal(warnings[0], `[Legate] ${NEW}=not-a-number is invalid — must be a positive integer; using default 120000`);
+  assert.equal(
+    warnings[0],
+    `[Legate] ${NEW}=not-a-number is invalid — must be a positive integer; using default 120000`,
+  );
 });
 
 test('resolveEnvInt: zero warns and returns the default (fixes the old `parseInt(v,10) || default` silent-zero bug)', async () => {
@@ -171,7 +178,11 @@ test('resolveEnvInt: invalid-value warning fires only once per name across repea
     resolveEnvInt(NAMES, 120_000);
     resolveEnvInt(NAMES, 120_000);
   });
-  assert.equal(warnings.length, 1, `expected exactly 1 invalid-value warning across 2 calls, got: ${JSON.stringify(warnings)}`);
+  assert.equal(
+    warnings.length,
+    1,
+    `expected exactly 1 invalid-value warning across 2 calls, got: ${JSON.stringify(warnings)}`,
+  );
 });
 
 test('resolveEnvInt: deprecation warning and invalid-value warning can both fire (fallback name AND invalid value)', async () => {
@@ -180,7 +191,11 @@ test('resolveEnvInt: deprecation warning and invalid-value warning can both fire
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });
-  assert.equal(warnings.length, 2, `expected a deprecation warning and an invalid-value warning, got: ${JSON.stringify(warnings)}`);
+  assert.equal(
+    warnings.length,
+    2,
+    `expected a deprecation warning and an invalid-value warning, got: ${JSON.stringify(warnings)}`,
+  );
   assert.ok(warnings.some((w) => w.includes('is deprecated')));
   assert.ok(warnings.some((w) => w.includes('is invalid')));
 });

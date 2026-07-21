@@ -23,10 +23,7 @@
  * re-assigned to its prior value otherwise. `undefined` in `vars` means "delete
  * this var for the duration of fn".
  */
-export async function withEnv<T>(
-  vars: Record<string, string | undefined>,
-  fn: () => T | Promise<T>,
-): Promise<T> {
+export async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T | Promise<T>): Promise<T> {
   const prev: Record<string, string | undefined> = {};
   for (const [name, value] of Object.entries(vars)) {
     prev[name] = process.env[name];
@@ -66,9 +63,7 @@ export async function withMockedFetch<T>(
  * `warnings`. Restores the original afterward. Returns both the collected
  * warnings and fn's return value.
  */
-export async function captureWarnings<T>(
-  fn: () => T | Promise<T>,
-): Promise<{ warnings: string[]; result: T }> {
+export async function captureWarnings<T>(fn: () => T | Promise<T>): Promise<{ warnings: string[]; result: T }> {
   const warnings: string[] = [];
   const orig = console.error;
   console.error = (...args: unknown[]) => {

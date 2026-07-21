@@ -10,11 +10,7 @@ function isConnRefused(err: unknown): boolean {
   if (!(err instanceof TypeError)) return false;
   const cause = (err as { cause?: unknown }).cause;
   const causeCode = (cause as { code?: string } | undefined)?.code;
-  return (
-    causeCode === 'ECONNREFUSED' ||
-    String(err).includes('ECONNREFUSED') ||
-    String(cause).includes('ECONNREFUSED')
-  );
+  return causeCode === 'ECONNREFUSED' || String(err).includes('ECONNREFUSED') || String(cause).includes('ECONNREFUSED');
 }
 
 /**
@@ -61,7 +57,9 @@ export async function fetchWithAuth(request: Request): Promise<Response> {
   if (reqUrl.protocol === 'http:' && reqUrl.hostname !== 'localhost' && reqUrl.hostname !== '127.0.0.1') {
     if (!_warnedRemoteHosts.has(reqUrl.hostname)) {
       _warnedRemoteHosts.add(reqUrl.hostname);
-      console.error(`[Legate] Warning: routing requests to '${reqUrl.hostname}' over plain HTTP — credentials will be sent in cleartext. Use an SSH tunnel for remote servers.`);
+      console.error(
+        `[Legate] Warning: routing requests to '${reqUrl.hostname}' over plain HTTP — credentials will be sent in cleartext. Use an SSH tunnel for remote servers.`,
+      );
     }
   }
   try {

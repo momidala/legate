@@ -54,7 +54,10 @@ function listToolsOverStdio(): Promise<string[]> {
 
     let buf = '';
     const pending = new Map<number, (msg: Record<string, unknown>) => void>();
-    child.on('error', (err) => { clearTimeout(guard); reject(err); });
+    child.on('error', (err) => {
+      clearTimeout(guard);
+      reject(err);
+    });
     child.stdout.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8');
       let nl: number;
@@ -63,9 +66,16 @@ function listToolsOverStdio(): Promise<string[]> {
         buf = buf.slice(nl + 1);
         if (!line) continue;
         let msg: Record<string, unknown>;
-        try { msg = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+        try {
+          msg = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
         const id = msg.id as number | undefined;
-        if (id !== undefined && pending.has(id)) { pending.get(id)!(msg); pending.delete(id); }
+        if (id !== undefined && pending.has(id)) {
+          pending.get(id)!(msg);
+          pending.delete(id);
+        }
       }
     });
 
@@ -88,7 +98,11 @@ function listToolsOverStdio(): Promise<string[]> {
       clearTimeout(guard);
       child.kill();
       resolvePromise(names);
-    })().catch((err) => { clearTimeout(guard); child.kill(); reject(err); });
+    })().catch((err) => {
+      clearTimeout(guard);
+      child.kill();
+      reject(err);
+    });
   });
 }
 
@@ -99,10 +113,13 @@ test('mcp-smoke: server advertises exactly the tools declared in src/index.ts', 
     advertised,
     declared,
     `Runtime tools/list must match the tools declared in source.\n` +
-    `declared (${declared.length}): ${JSON.stringify(declared)}\n` +
-    `advertised (${advertised.length}): ${JSON.stringify(advertised)}`,
+      `declared (${declared.length}): ${JSON.stringify(declared)}\n` +
+      `advertised (${advertised.length}): ${JSON.stringify(advertised)}`,
   );
   // Belt-and-suspenders: every advertised name is legate_ and none is prefect_.
-  assert.ok(advertised.every((n) => n.startsWith('legate_')), 'every advertised tool must start with legate_');
+  assert.ok(
+    advertised.every((n) => n.startsWith('legate_')),
+    'every advertised tool must start with legate_',
+  );
   assert.equal(advertised.filter((n) => n.startsWith('prefect_')).length, 0, 'no prefect_ tools may be advertised');
 });

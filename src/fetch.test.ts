@@ -25,17 +25,28 @@ function installMockFetch(): { requests: Request[]; restore: () => void } {
     requests.push(req);
     return Promise.resolve(new Response('{}', { status: 200 }));
   };
-  return { requests, restore: () => { (globalThis as unknown as Record<string, unknown>).fetch = orig; } };
+  return {
+    requests,
+    restore: () => {
+      (globalThis as unknown as Record<string, unknown>).fetch = orig;
+    },
+  };
 }
 
 function withRegistry(servers: Array<{ name: string; host: string; port: number }>): () => void {
   const dir = mkdtempSync(join(tmpdir(), 'legate-k2a-fetch-'));
   const path = join(dir, 'servers.json');
-  writeFileSync(path, JSON.stringify({
-    servers: servers.map((s) => ({ ...s, providerID: '', modelID: '' })),
-  }));
+  writeFileSync(
+    path,
+    JSON.stringify({
+      servers: servers.map((s) => ({ ...s, providerID: '', modelID: '' })),
+    }),
+  );
   _setRegistryPathForTest(path);
-  return () => { _setRegistryPathForTest(undefined); rmSync(dir, { recursive: true, force: true }); };
+  return () => {
+    _setRegistryPathForTest(undefined);
+    rmSync(dir, { recursive: true, force: true });
+  };
 }
 
 function withPassword(pw: string): () => void {
@@ -54,8 +65,15 @@ function withPassword(pw: string): () => void {
 function captureStderr(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
   const orig = console.error;
-  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
-  return { lines, restore: () => { console.error = orig; } };
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  return {
+    lines,
+    restore: () => {
+      console.error = orig;
+    },
+  };
 }
 
 test('fetchWithAuth: registered remote host + password → auth attached AND cleartext-HTTP warning still fires', async () => {
@@ -88,8 +106,14 @@ test('fetchWithAuth: unregistered remote host + password → NOT attached (both 
   try {
     await fetchWithAuth(new Request('http://10.0.0.12:4096/config'));
     assert.equal(mock.requests[0].headers.get('Authorization'), null, 'unregistered host must NOT receive credentials');
-    assert.ok(err.lines.some((l) => l.includes('plain HTTP') && l.includes('10.0.0.12')), 'cleartext warning fires');
-    assert.ok(err.lines.some((l) => l.includes('Not sending credentials') && l.includes('10.0.0.12')), 'untrusted-host warning fires');
+    assert.ok(
+      err.lines.some((l) => l.includes('plain HTTP') && l.includes('10.0.0.12')),
+      'cleartext warning fires',
+    );
+    assert.ok(
+      err.lines.some((l) => l.includes('Not sending credentials') && l.includes('10.0.0.12')),
+      'untrusted-host warning fires',
+    );
   } finally {
     err.restore();
     mock.restore();

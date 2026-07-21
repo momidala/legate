@@ -25,35 +25,52 @@ export const promptOverrideFields = {
   // RUN-03: system prompt override
   system: z.string().optional().describe('Override the system prompt for this single call.'),
   // RUN-05: tools override — CRITICAL: record (Map<string, boolean>), NOT array of strings
-  tools: z.record(z.string(), z.boolean()).optional()
-    .describe('Override enabled tools for this call. Map of tool ID to boolean enable/disable flag. Example: { "bash": true, "edit": false }'),
-  // RUN-06: file attachments — FilePartInput shape (use file:// URIs for local files)
-  files: z.array(z.object({
-    type: z.literal('file'),
-    mime: z.string(),
-    filename: z.string().optional(),
-    url: z.string().refine(
-      (u) => u.startsWith('file://'),
-      { message: 'files[].url must be a file:// URI' }
+  tools: z
+    .record(z.string(), z.boolean())
+    .optional()
+    .describe(
+      'Override enabled tools for this call. Map of tool ID to boolean enable/disable flag. Example: { "bash": true, "edit": false }',
     ),
-  })).optional()
-    .describe('File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).'),
+  // RUN-06: file attachments — FilePartInput shape (use file:// URIs for local files)
+  files: z
+    .array(
+      z.object({
+        type: z.literal('file'),
+        mime: z.string(),
+        filename: z.string().optional(),
+        url: z.string().refine((u) => u.startsWith('file://'), { message: 'files[].url must be a file:// URI' }),
+      }),
+    )
+    .optional()
+    .describe(
+      'File attachments to include as context. Each file requires mime type and url (use file:// URIs for local paths).',
+    ),
   // RUN-07: message ID assignment (idempotency key for user message creation)
-  messageID: z.string().optional()
-    .describe('Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.'),
+  messageID: z
+    .string()
+    .optional()
+    .describe(
+      'Assign a specific ID to the new user message being created. If a message with this ID already exists in the session, OpenCode returns the cached response (idempotency — useful for safe retries). Omit to auto-generate. For branching a conversation at a prior message point, use legate_fork instead.',
+    ),
   // RUN-08: structured agent part input (distinct from the top-level agent string override)
-  agentInput: z.object({
-    type: z.literal('agent'),
-    name: z.string(),
-  }).optional()
-    .describe('Structured agent part input — specify the agent name for this prompt. Distinct from the top-level agent string override.'),
+  agentInput: z
+    .object({
+      type: z.literal('agent'),
+      name: z.string(),
+    })
+    .optional()
+    .describe(
+      'Structured agent part input — specify the agent name for this prompt. Distinct from the top-level agent string override.',
+    ),
   // RUN-08: structured subtask part input
-  subtaskInput: z.object({
-    type: z.literal('subtask'),
-    prompt: z.string(),
-    description: z.string(),
-    agent: z.string(),
-  }).optional()
+  subtaskInput: z
+    .object({
+      type: z.literal('subtask'),
+      prompt: z.string(),
+      description: z.string(),
+      agent: z.string(),
+    })
+    .optional()
     .describe('Structured subtask part input — delegate a subtask to a specific agent.'),
 } as const;
 
@@ -92,6 +109,13 @@ export const SessionCommandInputSchema = z.object({
   model: z
     .string()
     .optional()
-    .describe('Optional model override as a plain string (NOT { providerID, modelID } — this endpoint takes a single string).'),
-  directory: z.string().optional().describe('Routes this call to the OpenCode project at the specified path. Does not change the session\'s working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.'),
+    .describe(
+      'Optional model override as a plain string (NOT { providerID, modelID } — this endpoint takes a single string).',
+    ),
+  directory: z
+    .string()
+    .optional()
+    .describe(
+      "Routes this call to the OpenCode project at the specified path. Does not change the session's working directory. Falls back to LEGATE_DEFAULT_PROJECT env var.",
+    ),
 });
