@@ -1,7 +1,10 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-// expects Plan 02 to export autostartTimeoutMs and _resetWarnFlags from autostart.ts
-import { ensureOpencodeRunning, _resetStartPromise, _setSpawn, _resetSpawn, autostartTimeoutMs, _resetWarnFlags } from './autostart.js';
+import { ensureOpencodeRunning, _resetStartPromise, _setSpawn, _resetSpawn, autostartTimeoutMs } from './autostart.js';
+// legate-4ah: _resetWarnFlags lives in env.ts — autostart.ts no longer re-exports it.
+import { _resetWarnFlags } from './env.js';
+// legate-4ah: shared try/finally helpers — see testutil.ts for rationale.
+import { withEnv, withMockedFetch, captureWarnings } from './testutil.js';
 import type { ServerEntry } from './registry.js';
 import type { spawn as SpawnType } from 'node:child_process';
 
@@ -71,98 +74,68 @@ test('ensureOpencodeRunning throws immediately for non-localhost server.host', a
 });
 
 test('ensureOpencodeRunning deduplicates concurrent calls for the same server (exactly one health poll)', async () => {
-  const origFetch = globalThis.fetch;
   const counter = { n: 0 };
-  (globalThis as unknown as Record<string, unknown>).fetch = mockOk(counter);
-  try {
+  await withMockedFetch(mockOk(counter), async () => {
     await Promise.all([ensureOpencodeRunning(LOCAL), ensureOpencodeRunning(LOCAL)]);
     assert.equal(counter.n, 1, `dedup failed — health poll called ${counter.n} times for 2 concurrent calls`);
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-  }
+  });
 });
 
 test('ensureOpencodeRunning starts two different servers concurrently (separate Map entries)', async () => {
-  const origFetch = globalThis.fetch;
   const counter = { n: 0 };
-  (globalThis as unknown as Record<string, unknown>).fetch = mockOk(counter);
-  try {
+  await withMockedFetch(mockOk(counter), async () => {
     await Promise.all([ensureOpencodeRunning(LOCAL), ensureOpencodeRunning(LOCAL_ALT)]);
     assert.equal(counter.n, 2, `expected 2 distinct health polls (one per server), got ${counter.n}`);
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-  }
+  });
 });
 
 test('ensureOpencodeRunning throws when OpenCode does not become healthy within timeout', async () => {
-  const origFetch = globalThis.fetch;
-  const origTimeout = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  process.env.LEGATE_AUTOSTART_TIMEOUT_MS = '200';
-  (globalThis as unknown as Record<string, unknown>).fetch = errorFetch();
-  try {
-    await assert.rejects(
-      () => ensureOpencodeRunning(LOCAL),
-      (err: Error) => err.message.includes('OpenCode did not become healthy within'),
-    );
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-    if (origTimeout === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = origTimeout;
-  }
+  await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: '200' }, async () => {
+    await withMockedFetch(errorFetch(), async () => {
+      await assert.rejects(
+        () => ensureOpencodeRunning(LOCAL),
+        (err: Error) => err.message.includes('OpenCode did not become healthy within'),
+      );
+    });
+  });
 });
 
 test('ensureOpencodeRunning health poll uses authFetch (injects auth header when password set)', async () => {
-  const prevPw = process.env.LEGATE_SERVER_PASSWORD;
-  process.env.LEGATE_SERVER_PASSWORD = 'healthtest';
-  const origFetch = globalThis.fetch;
-  let capturedAuth: string | null = null;
-  (globalThis as unknown as Record<string, unknown>).fetch = (req: Request) => {
-    capturedAuth = req.headers.get('Authorization');
-    return Promise.resolve(new Response('{}', { status: 200 }));
-  };
-  try {
-    await ensureOpencodeRunning(LOCAL);
-    const expected = `Basic ${Buffer.from('opencode:healthtest').toString('base64')}`;
-    assert.equal(capturedAuth, expected, 'health poll should inject Authorization header');
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-    if (prevPw === undefined) delete process.env.LEGATE_SERVER_PASSWORD;
-    else process.env.LEGATE_SERVER_PASSWORD = prevPw;
-  }
+  await withEnv({ LEGATE_SERVER_PASSWORD: 'healthtest' }, async () => {
+    let capturedAuth: string | null = null;
+    await withMockedFetch((req: Request) => {
+      capturedAuth = req.headers.get('Authorization');
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }, async () => {
+      await ensureOpencodeRunning(LOCAL);
+      const expected = `Basic ${Buffer.from('opencode:healthtest').toString('base64')}`;
+      assert.equal(capturedAuth, expected, 'health poll should inject Authorization header');
+    });
+  });
 });
 
 test('health poll URL targets server.host:server.port (not BASE_URL)', async () => {
-  const origFetch = globalThis.fetch;
   const urlCapture = { url: '' };
-  (globalThis as unknown as Record<string, unknown>).fetch = mockOk(undefined, urlCapture);
-  try {
+  await withMockedFetch(mockOk(undefined, urlCapture), async () => {
     await ensureOpencodeRunning(CUSTOM);
     assert.ok(urlCapture.url.includes(':4099/global/health'), `expected :4099/global/health in URL, got: ${urlCapture.url}`);
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-  }
+  });
 });
 
 test('ensureOpencodeRunning passes serve --port <port> to the spawner', async () => {
-  const origFetch = globalThis.fetch;
-  (globalThis as unknown as Record<string, unknown>).fetch = mockOk();
-  try {
+  await withMockedFetch(mockOk(), async () => {
     await ensureOpencodeRunning(CUSTOM);
     assert.equal(spawnCalls.length, 1, `expected exactly 1 spawn, got ${spawnCalls.length}`);
     assert.deepEqual(spawnCalls[0].args, ['serve', '--port', '4099']);
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-  }
+  });
 });
 
 test('ensureOpencodeRunning fails fast with a clear message when spawn errors (ENOENT)', async () => {
-  const origFetch = globalThis.fetch;
   // Health poll never succeeds — the spawn error must reject FIRST (fast), not
   // after the full health timeout.
-  (globalThis as unknown as Record<string, unknown>).fetch = errorFetch();
   spawnErrorToEmit = Object.assign(new Error('spawn opencode ENOENT'), { code: 'ENOENT' });
   const started = Date.now();
-  try {
+  await withMockedFetch(errorFetch(), async () => {
     await assert.rejects(
       () => ensureOpencodeRunning(LOCAL),
       (err: Error) => {
@@ -174,9 +147,7 @@ test('ensureOpencodeRunning fails fast with a clear message when spawn errors (E
     );
     // Well under the 30s default health timeout — proves the race short-circuits.
     assert.ok(Date.now() - started < 5000, 'spawn error should reject fast, not wait out the health timeout');
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
-  }
+  });
 });
 
 // ── RENAME-04 deprecation warning tests ────────────────────────────────────
@@ -184,76 +155,33 @@ test('ensureOpencodeRunning fails fast with a clear message when spawn errors (E
 // These tests MUST FAIL (RED) against current source — Plan 02 exports autostartTimeoutMs
 // and _resetWarnFlags from autostart.ts to make them pass.
 
-test('autostartTimeoutMs emits one-time deprecation warning for PREFECT_AUTOSTART_TIMEOUT_MS when LEGATE_AUTOSTART_TIMEOUT_MS is not set', () => {
+test('autostartTimeoutMs emits one-time deprecation warning for PREFECT_AUTOSTART_TIMEOUT_MS when LEGATE_AUTOSTART_TIMEOUT_MS is not set', async () => {
   _resetWarnFlags();
-  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-  delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
-
-  const warnings: string[] = [];
-  const origError = console.error;
-  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
-
-  try {
-    autostartTimeoutMs();
+  await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: undefined, PREFECT_AUTOSTART_TIMEOUT_MS: '5000' }, async () => {
+    const { warnings } = await captureWarnings(() => autostartTimeoutMs());
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
     assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning, got ${timeoutWarnings.length}: ${JSON.stringify(warnings)}`);
     assert.ok(timeoutWarnings[0].includes('LEGATE_AUTOSTART_TIMEOUT_MS'), `warning should mention LEGATE_AUTOSTART_TIMEOUT_MS: ${timeoutWarnings[0]}`);
-  } finally {
-    console.error = origError;
-    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
-    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
-  }
+  });
 });
 
-test('autostartTimeoutMs emits PREFECT_AUTOSTART_TIMEOUT_MS warning exactly once when called twice (one-time-per-process guard)', () => {
+test('autostartTimeoutMs emits PREFECT_AUTOSTART_TIMEOUT_MS warning exactly once when called twice (one-time-per-process guard)', async () => {
   _resetWarnFlags();
-  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-  delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
-
-  const warnings: string[] = [];
-  const origError = console.error;
-  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
-
-  try {
-    autostartTimeoutMs();
-    autostartTimeoutMs(); // second call — must NOT emit a second warning
+  await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: undefined, PREFECT_AUTOSTART_TIMEOUT_MS: '5000' }, async () => {
+    const { warnings } = await captureWarnings(() => {
+      autostartTimeoutMs();
+      autostartTimeoutMs(); // second call — must NOT emit a second warning
+    });
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
     assert.equal(timeoutWarnings.length, 1, `expected exactly 1 PREFECT_AUTOSTART_TIMEOUT_MS warning across 2 calls, got ${timeoutWarnings.length}`);
-  } finally {
-    console.error = origError;
-    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
-    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
-  }
+  });
 });
 
-test('autostartTimeoutMs emits NO PREFECT_AUTOSTART_TIMEOUT_MS warning when LEGATE_AUTOSTART_TIMEOUT_MS is also set (LEGATE_* takes precedence)', () => {
+test('autostartTimeoutMs emits NO PREFECT_AUTOSTART_TIMEOUT_MS warning when LEGATE_AUTOSTART_TIMEOUT_MS is also set (LEGATE_* takes precedence)', async () => {
   _resetWarnFlags();
-  const prevLegate = process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-  const prevPrefect = process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-  process.env.LEGATE_AUTOSTART_TIMEOUT_MS = '10000';
-  process.env.PREFECT_AUTOSTART_TIMEOUT_MS = '5000';
-
-  const warnings: string[] = [];
-  const origError = console.error;
-  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
-
-  try {
-    autostartTimeoutMs();
+  await withEnv({ LEGATE_AUTOSTART_TIMEOUT_MS: '10000', PREFECT_AUTOSTART_TIMEOUT_MS: '5000' }, async () => {
+    const { warnings } = await captureWarnings(() => autostartTimeoutMs());
     const timeoutWarnings = warnings.filter((w) => w.includes('PREFECT_AUTOSTART_TIMEOUT_MS'));
     assert.equal(timeoutWarnings.length, 0, `expected 0 PREFECT_AUTOSTART_TIMEOUT_MS warnings when LEGATE_AUTOSTART_TIMEOUT_MS is set, got ${timeoutWarnings.length}`);
-  } finally {
-    console.error = origError;
-    if (prevLegate === undefined) delete process.env.LEGATE_AUTOSTART_TIMEOUT_MS;
-    else process.env.LEGATE_AUTOSTART_TIMEOUT_MS = prevLegate;
-    if (prevPrefect === undefined) delete process.env.PREFECT_AUTOSTART_TIMEOUT_MS;
-    else process.env.PREFECT_AUTOSTART_TIMEOUT_MS = prevPrefect;
-  }
+  });
 });

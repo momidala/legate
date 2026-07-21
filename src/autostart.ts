@@ -3,7 +3,7 @@ import { buildAuthHeader } from './auth.js';
 import { resolveDirectory } from './config.js';
 import { ServerEntry } from './registry.js';
 // legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
-import { resolveEnvInt, _resetWarnFlags as _resetEnvWarnFlags } from './env.js';
+import { resolveEnvInt } from './env.js';
 
 const POLL_INTERVAL_MS = 500; // D-12: hardcoded — fast enough for local startup
 
@@ -17,11 +17,6 @@ export function autostartTimeoutMs(): number {
     ['LEGATE_AUTOSTART_TIMEOUT_MS', 'PREFECT_AUTOSTART_TIMEOUT_MS', 'OPENCODE_AUTOSTART_TIMEOUT_MS'],
     30_000,
   );
-}
-
-/** @internal — test use only. Delegates to env.ts's shared warn-once state. */
-export function _resetWarnFlags(): void {
-  _resetEnvWarnFlags();
 }
 
 // D-16: Per-server promise lock Map. Concurrent callers for the SAME server await the same

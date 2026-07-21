@@ -1,6 +1,8 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveEnv, resolveEnvInt, resolveEnvNum, _resetWarnFlags } from './env.js';
+// legate-4ah: shared captureWarnings helper — see testutil.ts for rationale.
+import { captureWarnings } from './testutil.js';
 
 // legate-lcg: dedicated test names so these tests never collide with real
 // LEGATE_*/PREFECT_*/OPENCODE_* vars a developer might have set in their shell.
@@ -15,18 +17,6 @@ function clearAll(): void {
   delete process.env[OLD2];
 }
 
-function captureWarnings(fn: () => void): string[] {
-  const warnings: string[] = [];
-  const orig = console.error;
-  console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
-  try {
-    fn();
-  } finally {
-    console.error = orig;
-  }
-  return warnings;
-}
-
 beforeEach(() => {
   _resetWarnFlags();
   clearAll();
@@ -34,36 +24,36 @@ beforeEach(() => {
 
 // ── resolveEnv: selection ────────────────────────────────────────────────────
 
-test('resolveEnv: first name wins, no warning emitted', () => {
+test('resolveEnv: first name wins, no warning emitted', async () => {
   process.env[NEW] = 'new-value';
   process.env[OLD1] = 'old-value';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES);
     assert.equal(result, 'new-value');
   });
   assert.equal(warnings.length, 0, `expected no warnings, got: ${JSON.stringify(warnings)}`);
 });
 
-test('resolveEnv: falls back to second name and warns exactly once', () => {
+test('resolveEnv: falls back to second name and warns exactly once', async () => {
   process.env[OLD1] = 'old-value';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES);
     assert.equal(result, 'old-value');
   });
   assert.equal(warnings.length, 1, `expected exactly 1 warning, got: ${JSON.stringify(warnings)}`);
 });
 
-test('resolveEnv: warning message format is "[Legate] <OLD> is deprecated, use <NEW>"', () => {
+test('resolveEnv: warning message format is "[Legate] <OLD> is deprecated, use <NEW>"', async () => {
   process.env[OLD1] = 'old-value';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     resolveEnv(NAMES);
   });
   assert.equal(warnings[0], `[Legate] ${OLD1} is deprecated, use ${NEW}`);
 });
 
-test('resolveEnv: warns once per name even across repeated calls', () => {
+test('resolveEnv: warns once per name even across repeated calls', async () => {
   process.env[OLD1] = 'old-value';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     resolveEnv(NAMES);
     resolveEnv(NAMES);
     resolveEnv(NAMES);
@@ -71,19 +61,19 @@ test('resolveEnv: warns once per name even across repeated calls', () => {
   assert.equal(warnings.length, 1, `expected exactly 1 warning across 3 calls, got: ${JSON.stringify(warnings)}`);
 });
 
-test('resolveEnv: a variable set but losing to an earlier name in the chain does not warn', () => {
+test('resolveEnv: a variable set but losing to an earlier name in the chain does not warn', async () => {
   process.env[NEW] = 'new-value';
   process.env[OLD1] = 'old-value'; // set, but loses to NEW
   process.env[OLD2] = 'oldest-value'; // set, but loses to NEW too
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES);
     assert.equal(result, 'new-value');
   });
   assert.equal(warnings.length, 0, `expected no warnings — OLD1/OLD2 never win the chain, got: ${JSON.stringify(warnings)}`);
 });
 
-test('resolveEnv: returns undefined and warns nothing when no name is set', () => {
-  const warnings = captureWarnings(() => {
+test('resolveEnv: returns undefined and warns nothing when no name is set', async () => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES);
     assert.equal(result, undefined);
   });
@@ -92,37 +82,37 @@ test('resolveEnv: returns undefined and warns nothing when no name is set', () =
 
 // ── resolveEnv: empty-string handling ───────────────────────────────────────
 
-test('resolveEnv default options: empty string on a fallback name wins the chain AND warns (matches autostart.ts/sessions.ts `!== undefined` sites)', () => {
+test('resolveEnv default options: empty string on a fallback name wins the chain AND warns (matches autostart.ts/sessions.ts `!== undefined` sites)', async () => {
   process.env[OLD1] = '';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES);
     assert.equal(result, '', 'empty string should win — selection is `!== undefined`, not truthiness');
   });
   assert.equal(warnings.length, 1, 'unconditional warn-on-selection sites warn even for an empty winning value');
 });
 
-test('resolveEnv quietEmptyWarn: empty string on a fallback name wins the chain but does NOT warn (matches BASE_URL/auth.ts/config.ts `??` + truthy-gated-warn sites)', () => {
+test('resolveEnv quietEmptyWarn: empty string on a fallback name wins the chain but does NOT warn (matches BASE_URL/auth.ts/config.ts `??` + truthy-gated-warn sites)', async () => {
   process.env[OLD1] = '';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES, { quietEmptyWarn: true });
     assert.equal(result, '', 'empty string still wins the `??` chain');
   });
   assert.equal(warnings.length, 0, 'quietEmptyWarn suppresses the warning for a falsy winning value');
 });
 
-test('resolveEnv requireTruthy: empty string on the primary name is skipped, falls through to a truthy fallback (matches the old resolveTimeoutMs `if (legateVal)` gate)', () => {
+test('resolveEnv requireTruthy: empty string on the primary name is skipped, falls through to a truthy fallback (matches the old resolveTimeoutMs `if (legateVal)` gate)', async () => {
   process.env[NEW] = '';
   process.env[OLD1] = 'old-value';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES, { requireTruthy: true });
     assert.equal(result, 'old-value');
   });
   assert.equal(warnings.length, 1, 'the truthy fallback that wins should still warn');
 });
 
-test('resolveEnv requireTruthy: empty string anywhere in the chain never wins — falls through to undefined if nothing else is truthy', () => {
+test('resolveEnv requireTruthy: empty string anywhere in the chain never wins — falls through to undefined if nothing else is truthy', async () => {
   process.env[OLD1] = '';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnv(NAMES, { requireTruthy: true });
     assert.equal(result, undefined);
   });
@@ -137,17 +127,17 @@ test('resolveEnvInt: valid positive integer is parsed and returned', () => {
   assert.equal(result, 5000);
 });
 
-test('resolveEnvInt: missing env var returns the default with no warning', () => {
-  const warnings = captureWarnings(() => {
+test('resolveEnvInt: missing env var returns the default with no warning', async () => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });
   assert.equal(warnings.length, 0);
 });
 
-test('resolveEnvInt: non-numeric value (NaN) warns and returns the default', () => {
+test('resolveEnvInt: non-numeric value (NaN) warns and returns the default', async () => {
   process.env[NEW] = 'not-a-number';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });
@@ -155,9 +145,9 @@ test('resolveEnvInt: non-numeric value (NaN) warns and returns the default', () 
   assert.equal(warnings[0], `[Legate] ${NEW}=not-a-number is invalid — must be a positive integer; using default 120000`);
 });
 
-test('resolveEnvInt: zero warns and returns the default (fixes the old `parseInt(v,10) || default` silent-zero bug)', () => {
+test('resolveEnvInt: zero warns and returns the default (fixes the old `parseInt(v,10) || default` silent-zero bug)', async () => {
   process.env[NEW] = '0';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });
@@ -165,9 +155,9 @@ test('resolveEnvInt: zero warns and returns the default (fixes the old `parseInt
   assert.equal(warnings[0], `[Legate] ${NEW}=0 is invalid — must be a positive integer; using default 120000`);
 });
 
-test('resolveEnvInt: negative value warns and returns the default (fixes the old silent-negative-acceptance bug)', () => {
+test('resolveEnvInt: negative value warns and returns the default (fixes the old silent-negative-acceptance bug)', async () => {
   process.env[NEW] = '-100';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });
@@ -175,18 +165,18 @@ test('resolveEnvInt: negative value warns and returns the default (fixes the old
   assert.equal(warnings[0], `[Legate] ${NEW}=-100 is invalid — must be a positive integer; using default 120000`);
 });
 
-test('resolveEnvInt: invalid-value warning fires only once per name across repeated calls', () => {
+test('resolveEnvInt: invalid-value warning fires only once per name across repeated calls', async () => {
   process.env[NEW] = '-1';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     resolveEnvInt(NAMES, 120_000);
     resolveEnvInt(NAMES, 120_000);
   });
   assert.equal(warnings.length, 1, `expected exactly 1 invalid-value warning across 2 calls, got: ${JSON.stringify(warnings)}`);
 });
 
-test('resolveEnvInt: deprecation warning and invalid-value warning can both fire (fallback name AND invalid value)', () => {
+test('resolveEnvInt: deprecation warning and invalid-value warning can both fire (fallback name AND invalid value)', async () => {
   process.env[OLD1] = '0';
-  const warnings = captureWarnings(() => {
+  const { warnings } = await captureWarnings(() => {
     const result = resolveEnvInt(NAMES, 120_000);
     assert.equal(result, 120_000);
   });

@@ -5,14 +5,9 @@ import { lock } from 'proper-lockfile';
 import { buildAuthHeader } from './auth.js';
 import { migrateIfNeeded } from './migration.js';
 // legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
-import { resolveEnvNum, _resetWarnFlags as _resetEnvWarnFlags } from './env.js';
+import { resolveEnvNum } from './env.js';
 
 const DEFAULT_SESSION_TTL_MS = 86_400_000; // 24 hours
-
-/** @internal — test use only. Delegates to env.ts's shared warn-once state. */
-export function _resetWarnFlags(): void {
-  _resetEnvWarnFlags();
-}
 
 export interface SessionEntry {
   server: string;  // name from registry (must match a ServerEntry.name in servers.json)
