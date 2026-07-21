@@ -4,6 +4,11 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { addServer, removeServer, listServers, readRegistry } from './registry.js';
+// legate-hry: the prefect→legate config migration used to run as a side effect of
+// importing registry.js. It is now explicit — the CLI must trigger it itself before any
+// readRegistry(), otherwise a user who last used the pre-rename CLI would not get their
+// ~/.config/prefect config copied forward when running legate commands.
+import { runStartupMigrations } from './startup.js';
 
 // Resolve absolute path to build/index.js (the MCP server) from this CLI's
 // own location. Both files live side-by-side in the build/ output dir.
@@ -240,6 +245,9 @@ function printOnboardingIfNoServers(): void {
     );
   }
 }
+
+// legate-hry: run the one-time config migration before any command reads the registry.
+runStartupMigrations();
 
 const args = process.argv.slice(2);
 const subcommand = args[0];

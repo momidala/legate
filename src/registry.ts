@@ -27,14 +27,16 @@ export const REGISTRY_PATH = join(REGISTRY_DIR, 'servers.json');
  * by `legate add-server` before the MCP ever runs, so a directory-existence guard would
  * silently skip migration on any machine that used the CLI before the rename (legate-5di).
  *
- * @internal — exported for testing only. Mirrors sessions._runMigration.
+ * legate-hry: this used to be invoked at module top level (a load-time side effect).
+ * The call now lives in runStartupMigrations() (src/startup.ts), invoked once by the
+ * MCP server main() and the CLI at startup — so importing this module is side-effect
+ * free. The helper itself is unchanged.
+ *
+ * @internal — exported for testing only and for runStartupMigrations(). Mirrors sessions._runMigration.
  */
 export function _runRegistryMigration(newPath: string, oldDir: string): void {
   migrateIfNeeded(newPath, oldDir, dirname(newPath));
 }
-
-const OLD_REGISTRY_DIR = join(homedir(), '.config', 'prefect');
-_runRegistryMigration(REGISTRY_PATH, OLD_REGISTRY_DIR);
 
 export function readRegistry(registryPath: string = REGISTRY_PATH): Registry {
   try {

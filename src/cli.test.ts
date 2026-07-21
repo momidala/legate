@@ -455,7 +455,10 @@ function runCliAsGlobal(homeDir: string, ...args: string[]):
   mkdirSync(fakeBuildDir, { recursive: true });
   // Copy all build artifacts so imports resolve
   const srcBuildDir = resolve(process.cwd(), 'build');
-  const buildFiles = ['cli.js', 'registry.js', 'migration.js'];
+  // legate-hry: cli.js now also imports startup.js (which imports registry.js +
+  // migration.js). startup.ts deliberately avoids sessions.ts/proper-lockfile so this
+  // isolated fake install (no node_modules for deps) still resolves the full graph.
+  const buildFiles = ['cli.js', 'registry.js', 'migration.js', 'startup.js'];
   for (const f of buildFiles) {
     const srcPath = join(srcBuildDir, f);
     if (!existsSync(srcPath)) {

@@ -39,16 +39,18 @@ export const SESSIONS_PATH = join(SESSIONS_DIR, 'sessions.json');
  * would cause the migration to be silently skipped on any machine that used the CLI
  * before the rename.
  *
- * @internal — exported for testing only.
+ * legate-hry: this used to be invoked at module top level (a load-time side effect).
+ * The call now lives in runStartupMigrations() (src/startup.ts), invoked once by the
+ * MCP server main() and the CLI at startup — so importing this module is side-effect
+ * free. The helper itself is unchanged.
+ *
+ * @internal — exported for testing only and for runStartupMigrations().
  */
 export function _runMigration(newPath: string, oldDir: string): void {
   // Delegates to the shared helper (legate-5di). Copies into dirname(newPath) — identical
   // to the original inline behavior, including "copy even if the target dir already exists".
   migrateIfNeeded(newPath, oldDir, dirname(newPath));
 }
-
-const OLD_SESSIONS_DIR = join(homedir(), '.config', 'prefect');
-_runMigration(SESSIONS_PATH, OLD_SESSIONS_DIR);
 
 /**
  * Resolve the session TTL from env vars, emitting a one-time deprecation warning for the

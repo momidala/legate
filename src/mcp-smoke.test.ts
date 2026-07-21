@@ -1,22 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 
 // legate-epe: end-to-end smoke test for the registration refactor.
 //
 // The refactor moved ~29 of the 40 tools behind registerSessionTool/registerServerTool
 // wrappers. This test speaks minimal MCP over stdio to the *built* server (build/index.js)
 // and asserts that the tools the server actually advertises (tools/list) are exactly the
-// tools declared in src/index.ts. That closes the loop the source-parsing test in
+// tools declared in source. That closes the loop the source-parsing test in
 // index.test.ts cannot: it proves the wrappers really register every tool at runtime,
 // with no drift between what the source declares and what the server exposes.
+//
+// legate-hry: after the index.ts split, the tool declarations live across the four
+// src/tools/*.ts modules, so this scans that directory rather than index.ts.
 //
 // It is hermetic — tools/list requires no live OpenCode server, so nothing external is
 // needed and the test does not touch the network.
 
-const INDEX_SRC = resolve(process.cwd(), 'src/index.ts');
+const TOOLS_DIR = resolve(process.cwd(), 'src/tools');
 const SERVER_ENTRY = resolve(process.cwd(), 'build/index.js');
 
 // Same registration-site grammar as index.test.ts: the three call forms, each followed
@@ -25,7 +28,10 @@ const SERVER_ENTRY = resolve(process.cwd(), 'build/index.js');
 const TOOL_REGISTRATION = /(?:server\.registerTool|registerSessionTool|registerServerTool)\(\s*\n?\s*'([^']+)'/g;
 
 function declaredToolNames(): string[] {
-  const src = readFileSync(INDEX_SRC, 'utf8');
+  const src = readdirSync(TOOLS_DIR)
+    .filter((f) => f.endsWith('.ts'))
+    .map((f) => readFileSync(join(TOOLS_DIR, f), 'utf8'))
+    .join('\n');
   const names: string[] = [];
   let m: RegExpExecArray | null;
   const re = new RegExp(TOOL_REGISTRATION.source, 'g');
