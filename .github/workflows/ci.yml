@@ -92,9 +92,7 @@ jobs:
       # whole new job/matrix leg just for it.
       - run: npm run typecheck
 
-      # format:check is intentionally not gated in CI: the existing codebase's
-      # style (aligned inline comments, single-line try/catch bodies, long
-      # chained `.describe()` calls) produces a large reflow under Prettier's
-      # defaults that isn't worth forcing right now. `npm run format:check` /
-      # `npm run format` remain available locally and in editors via
-      # .prettierrc.
+      # legate-4ah: format:check became a real gate after the one-time Prettier
+      # reflow (commit listed in .git-blame-ignore-revs — git blame skips it).
+      # A permanently-red or absent check was worse than either alternative.
+      - run: npm run format:check
