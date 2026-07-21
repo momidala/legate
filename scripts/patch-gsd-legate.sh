@@ -12,10 +12,14 @@
 #   ~/.claude/agents/gsd-code-fixer.md — code fix agent (gsd-code-review --fix)
 #
 # Each patch:
-#   1. Adds `mcp__prefect__legate_*` to the tools list in the YAML frontmatter
+#   1. Adds `mcp__legate__legate_*` to the tools list in the YAML frontmatter
 #   2. Appends a <legate_delegation> block to the agent body
 #
 # Idempotent: re-running does NOT double-patch.
+# Legacy-aware: agent files patched by an older version of this script under
+# the old `mcp__prefect__legate_*` MCP key are detected and upgraded in place
+# to `mcp__legate__legate_*` (the .mcp.json mcpServers key was renamed from
+# `prefect` to `legate` — see README "Migrating an existing .mcp.json").
 # Creates .pre-legate.bak backups before any modification.
 #
 # Why:
@@ -40,8 +44,11 @@ for arg in "$@"; do
   esac
 done
 
-AGENTS_DIR="$HOME/.claude/agents"
-LEGATE_TOOL="mcp__prefect__legate_*"
+AGENTS_DIR="${AGENTS_DIR:-$HOME/.claude/agents}"
+OLD_TOOL_PREFIX="mcp__prefect__legate_"
+NEW_TOOL_PREFIX="mcp__legate__legate_"
+LEGATE_TOOL="${NEW_TOOL_PREFIX}*"
+OLD_LEGATE_TOOL="${OLD_TOOL_PREFIX}*"
 PATCH_MARKER="<legate_delegation>"
 
 # ---------------------------------------------------------------------------
@@ -73,20 +80,20 @@ Use this in place of writing code directly for qualifying tasks:
 
 **Step 1 — Create session.** Always pass `directory` as the project's absolute path:
 ```
-mcp__prefect__legate_create_session(title="<task name>", directory="<abs path>")
+mcp__legate__legate_create_session(title="<task name>", directory="<abs path>")
 ```
 Save the returned `id` as your `sessionId` for this task.
 
 **Step 2 — Delegate task.** Describe precisely what to implement; reference the task
 spec, file paths, and any interface contracts from the plan:
 ```
-mcp__prefect__legate_run(sessionId="<id>", prompt="<detailed task description>")
+mcp__legate__legate_run(sessionId="<id>", prompt="<detailed task description>")
 ```
-Blocks up to 120s. If stuck, call `mcp__prefect__legate_abort(sessionId="<id>")`.
+Blocks up to 120s. If stuck, call `mcp__legate__legate_abort(sessionId="<id>")`.
 
 **Step 3 — Review diff.** Inspect ALL changed files:
 ```
-mcp__prefect__legate_get_diff(sessionId="<id>")
+mcp__legate__legate_get_diff(sessionId="<id>")
 ```
 Read the full diff. If the diff alone is insufficient, use Read on modified files.
 
@@ -95,8 +102,8 @@ Read the full diff. If the diff alone is insufficient, use Read on modified file
 
 **Step 5 — Decide:**
 - Tests pass + diff correct → proceed to `task_commit_protocol` as normal
-- Needs correction → `mcp__prefect__legate_run(sessionId="<id>", prompt="correct: <feedback>")`, return to Step 3
-- Session off-rails (wrong files, confused model) → `mcp__prefect__legate_fork(sessionId="<id>", messageID=<last-good-id>)` for a clean copy, return to Step 2 with new session ID
+- Needs correction → `mcp__legate__legate_run(sessionId="<id>", prompt="correct: <feedback>")`, return to Step 3
+- Session off-rails (wrong files, confused model) → `mcp__legate__legate_fork(sessionId="<id>", messageID=<last-good-id>)` for a clean copy, return to Step 2 with new session ID
 - Give up → `git checkout -- .` to reset working tree; discard session
 
 **Step 6 — Commit.** Use `task_commit_protocol` exactly as for direct edits:
@@ -104,13 +111,13 @@ stage individual files, commit with conventional message, record hash.
 
 **Step 7 — Delete session.** Always required — sessions accumulate in sessions.json:
 ```
-mcp__prefect__legate_session_delete(sessionId="<id>")
+mcp__legate__legate_session_delete(sessionId="<id>")
 ```
 
 ### Tool availability fallback
-If legate tools are unavailable (prefect MCP not loaded, OpenCode server offline),
+If legate tools are unavailable (legate MCP not loaded, OpenCode server offline),
 fall back to direct Edit/Write as normal. Never block task execution waiting for legate.
-The prefect server health check: `curl http://localhost:4096/global/health`
+The OpenCode server health check: `curl http://localhost:4096/global/health`
 </legate_delegation>
 EXECUTOR_EOF
 
@@ -142,17 +149,17 @@ Use in place of writing fixes directly for qualifying findings:
 
 **Step 1 — Create session.** Always pass `directory` as the project's absolute path:
 ```
-mcp__prefect__legate_create_session(title="fix <finding_id>", directory="<abs path>")
+mcp__legate__legate_create_session(title="fix <finding_id>", directory="<abs path>")
 ```
 
 **Step 2 — Delegate fix.** Include the full finding context in your prompt:
 ```
-mcp__prefect__legate_run(sessionId="<id>", prompt="<finding_id>: <issue description>. Fix: <fix guidance from REVIEW.md>. File: <path>")
+mcp__legate__legate_run(sessionId="<id>", prompt="<finding_id>: <issue description>. Fix: <fix guidance from REVIEW.md>. File: <path>")
 ```
 
 **Step 3 — Review diff.**
 ```
-mcp__prefect__legate_get_diff(sessionId="<id>")
+mcp__legate__legate_get_diff(sessionId="<id>")
 ```
 
 **Step 4 — Verify.** Apply `verification_strategy` as normal using Bash.
@@ -160,16 +167,16 @@ If verification fails, use `rollback_strategy` (`git checkout -- <file>`) — no
 
 **Step 5 — Decide:**
 - Verification passes → proceed to atomic commit via `gsd-sdk query commit`
-- Needs correction → `mcp__prefect__legate_run` with corrective feedback, return to Step 3
+- Needs correction → `mcp__legate__legate_run` with corrective feedback, return to Step 3
 - Rollback needed → `git checkout -- <files>`, mark finding as skipped with reason
 
 **Step 6 — Delete session.** Always:
 ```
-mcp__prefect__legate_session_delete(sessionId="<id>")
+mcp__legate__legate_session_delete(sessionId="<id>")
 ```
 
 ### Tool availability fallback
-If legate tools unavailable (prefect MCP not loaded), fall back to direct Edit as normal.
+If legate tools unavailable (legate MCP not loaded), fall back to direct Edit as normal.
 </legate_delegation>
 FIXER_EOF
 
@@ -221,15 +228,22 @@ if $STATUS; then
     fi
     has_tool=false
     has_block=false
+    has_legacy=false
     grep -q "$LEGATE_TOOL" "$agent_file" && has_tool=true
+    grep -q "$OLD_LEGATE_TOOL" "$agent_file" && has_tool=true
+    grep -qF "$OLD_TOOL_PREFIX" "$agent_file" && has_legacy=true
     grep -q "$PATCH_MARKER" "$agent_file" && has_block=true
     has_backup=false
     [[ -f "${agent_file}.pre-legate.bak" ]] && has_backup=true
 
     if $has_tool && $has_block; then
-      echo "  ✅ PATCHED:    $name$(${has_backup} && echo ' (backup exists)' || echo '')"
+      if $has_legacy; then
+        echo "  ⚠️  PATCHED (legacy prefix): $name — still has old mcp__prefect__legate_* refs; re-run without --status/--dry-run to upgrade to mcp__legate__legate_*$(${has_backup} && echo ' (backup exists)' || echo '')"
+      else
+        echo "  ✅ PATCHED:    $name$(${has_backup} && echo ' (backup exists)' || echo '')"
+      fi
     elif $has_tool || $has_block; then
-      echo "  ⚠️  PARTIAL:   $name (tool=$has_tool block=$has_block)"
+      echo "  ⚠️  PARTIAL:   $name (tool=$has_tool block=$has_block)$($has_legacy && echo ' [legacy mcp__prefect__legate_* present]' || echo '')"
     else
       echo "  ○  UNPATCHED:  $name"
     fi
@@ -261,6 +275,13 @@ for name in "${AGENT_NAMES[@]}"; do
   content="$(cat "$agent_file")"
   modified=false
 
+  # ---- 0. Upgrade legacy mcp__prefect__legate_* references (old .mcp.json key) ----
+  if echo "$content" | grep -qF "$OLD_TOOL_PREFIX"; then
+    content="$(echo "$content" | sed "s/${OLD_TOOL_PREFIX}/${NEW_TOOL_PREFIX}/g")"
+    echo "  ⬆️  Upgraded legacy ${OLD_TOOL_PREFIX}* references to ${NEW_TOOL_PREFIX}*"
+    modified=true
+  fi
+
   # ---- 1. Patch frontmatter tools line ----
   if echo "$content" | grep -q "$LEGATE_TOOL"; then
     echo "  ⏭️  Tools: already contains $LEGATE_TOOL"
@@ -268,8 +289,8 @@ for name in "${AGENT_NAMES[@]}"; do
     # Find the tools: line and append the legate wildcard
     # We handle the single-line format: "tools: X, Y, Z"
     if echo "$content" | grep -qE '^tools: '; then
-      content="$(echo "$content" | sed -E "s/^(tools: .+)$/\1, mcp__prefect__legate_*/")"
-      echo "  ✅ Tools: added mcp__prefect__legate_*"
+      content="$(echo "$content" | sed -E "s/^(tools: .+)$/\1, mcp__legate__legate_*/")"
+      echo "  ✅ Tools: added mcp__legate__legate_*"
       modified=true
     else
       echo "  ⚠️  Tools: could not find 'tools: ...' line — skipping tools patch"
@@ -290,7 +311,7 @@ for name in "${AGENT_NAMES[@]}"; do
     if $DRY_RUN; then
       echo "  🔍 [DRY RUN] Would write $agent_file"
       echo "       First changed tools line:"
-      echo "$content" | grep "mcp__prefect__legate" | head -1 | sed 's/^/       /'
+      echo "$content" | grep "$NEW_TOOL_PREFIX" | head -1 | sed 's/^/       /'
     else
       # Backup original (only if no backup already exists)
       if [[ ! -f "$backup_file" ]]; then
@@ -317,7 +338,7 @@ elif $any_changed; then
   echo "=== Patches applied. ==="
   echo ""
   echo "What changed:"
-  echo "  • gsd-executor and gsd-code-fixer now have mcp__prefect__legate_* in their tools list"
+  echo "  • gsd-executor and gsd-code-fixer now have mcp__legate__legate_* in their tools list"
   echo "  • Each agent has a <legate_delegation> block explaining when/how to delegate"
   echo ""
   echo "To verify:"

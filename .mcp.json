@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "prefect": {
+    "legate": {
       "type": "stdio",
       "command": "node",
       "args": [
