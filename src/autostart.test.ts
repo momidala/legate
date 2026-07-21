@@ -1,11 +1,44 @@
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 // expects Plan 02 to export autostartTimeoutMs and _resetWarnFlags from autostart.ts
-import { ensureOpencodeRunning, _resetStartPromise, autostartTimeoutMs, _resetWarnFlags } from './autostart.js';
+import { ensureOpencodeRunning, _resetStartPromise, _setSpawn, _resetSpawn, autostartTimeoutMs, _resetWarnFlags } from './autostart.js';
 import type { ServerEntry } from './registry.js';
+import type { spawn as SpawnType } from 'node:child_process';
+
+// Fake spawner: these are UNIT tests — they must never execute a real
+// 'opencode serve'. The real spawn orphaned children locally and crashed CI
+// (uncaughtException: spawn opencode ENOENT) on runners without the binary.
+// The stub satisfies the two members ensureOpencodeRunning uses: on(), unref().
+type SpawnCall = { cmd: string; args: string[] };
+const spawnCalls: SpawnCall[] = [];
+let spawnErrorToEmit: Error | undefined;
+
+function fakeSpawn(cmd: string, args: string[]): ReturnType<typeof SpawnType> {
+  spawnCalls.push({ cmd, args });
+  const listeners = new Map<string, (arg: unknown) => void>();
+  const child = {
+    on(event: string, cb: (arg: unknown) => void) {
+      listeners.set(event, cb);
+      if (event === 'error' && spawnErrorToEmit) {
+        const err = spawnErrorToEmit;
+        setImmediate(() => cb(err));  // async, like the real ENOENT delivery
+      }
+      return child;
+    },
+    unref() { /* no-op */ },
+  };
+  return child as unknown as ReturnType<typeof SpawnType>;
+}
 
 beforeEach(() => {
   _resetStartPromise();
+  spawnCalls.length = 0;
+  spawnErrorToEmit = undefined;
+  _setSpawn(fakeSpawn as unknown as typeof SpawnType);
+});
+
+afterEach(() => {
+  _resetSpawn();
 });
 
 const LOCAL: ServerEntry = { name: 'local', host: 'localhost', port: 4096, providerID: 'vllm', modelID: 'qwen3' };
@@ -105,6 +138,42 @@ test('health poll URL targets server.host:server.port (not BASE_URL)', async () 
   try {
     await ensureOpencodeRunning(CUSTOM);
     assert.ok(urlCapture.url.includes(':4099/global/health'), `expected :4099/global/health in URL, got: ${urlCapture.url}`);
+  } finally {
+    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
+  }
+});
+
+test('ensureOpencodeRunning passes serve --port <port> to the spawner', async () => {
+  const origFetch = globalThis.fetch;
+  (globalThis as unknown as Record<string, unknown>).fetch = mockOk();
+  try {
+    await ensureOpencodeRunning(CUSTOM);
+    assert.equal(spawnCalls.length, 1, `expected exactly 1 spawn, got ${spawnCalls.length}`);
+    assert.deepEqual(spawnCalls[0].args, ['serve', '--port', '4099']);
+  } finally {
+    (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
+  }
+});
+
+test('ensureOpencodeRunning fails fast with a clear message when spawn errors (ENOENT)', async () => {
+  const origFetch = globalThis.fetch;
+  // Health poll never succeeds — the spawn error must reject FIRST (fast), not
+  // after the full health timeout.
+  (globalThis as unknown as Record<string, unknown>).fetch = errorFetch();
+  spawnErrorToEmit = Object.assign(new Error('spawn opencode ENOENT'), { code: 'ENOENT' });
+  const started = Date.now();
+  try {
+    await assert.rejects(
+      () => ensureOpencodeRunning(LOCAL),
+      (err: Error) => {
+        assert.ok(err.message.includes('Failed to spawn'), `got: ${err.message}`);
+        assert.ok(err.message.includes('ENOENT'), `got: ${err.message}`);
+        assert.ok(err.message.includes('on PATH'), `got: ${err.message}`);
+        return true;
+      },
+    );
+    // Well under the 30s default health timeout — proves the race short-circuits.
+    assert.ok(Date.now() - started < 5000, 'spawn error should reject fast, not wait out the health timeout');
   } finally {
     (globalThis as unknown as Record<string, unknown>).fetch = origFetch;
   }

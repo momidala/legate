@@ -90,13 +90,23 @@ export async function ensureOpencodeRunning(server: ServerEntry): Promise<void> 
   console.error(`[Legate] OpenCode not reachable on ${serverUrl} — spawning 'opencode serve --port ${port}'`);
 
   const promise = (async () => {
-    const child = spawn(cmd, ['serve', '--port', port], {
+    const child = spawnImpl(cmd, ['serve', '--port', port], {
       stdio: ['ignore', 'ignore', 'inherit'],
       cwd,
       detached: false,
     });
+    // Spawn failures ('opencode' not on PATH → ENOENT) are delivered as an async
+    // 'error' EVENT, not a throw. Without a listener the event escalates to
+    // uncaughtException (this crashed CI, where opencode is not installed) and the
+    // caller would otherwise wait out the full health timeout instead of failing
+    // fast with the real reason. Race the health poll against the spawn error.
+    const spawnFailed = new Promise<never>((_, reject) => {
+      child.on('error', (err) => {
+        reject(new Error(`[Legate] Failed to spawn '${cmd}': ${err.message}. Is OpenCode installed and on PATH?`));
+      });
+    });
     child.unref();
-    await waitForHealth(serverUrl);
+    await Promise.race([waitForHealth(serverUrl), spawnFailed]);
     console.error(`[Legate] OpenCode is healthy at ${serverUrl}`);
   })().finally(() => {
     startPromises.delete(key);
@@ -109,4 +119,20 @@ export async function ensureOpencodeRunning(server: ServerEntry): Promise<void> 
 /** @internal — test use only. Resets the spawn lock map so each test starts clean. */
 export function _resetStartPromise(): void {
   startPromises.clear();
+}
+
+// Spawn seam: tests inject a fake spawner so the suite NEVER executes a real
+// 'opencode serve' (unit tests were spawning real servers — orphaned children
+// locally, uncaughtException ENOENT crashes on CI runners without the binary).
+type SpawnFn = typeof spawn;
+let spawnImpl: SpawnFn = spawn;
+
+/** @internal — test use only. Replaces the child_process.spawn implementation. */
+export function _setSpawn(fn: SpawnFn): void {
+  spawnImpl = fn;
+}
+
+/** @internal — test use only. Restores the real spawn implementation. */
+export function _resetSpawn(): void {
+  spawnImpl = spawn;
 }
