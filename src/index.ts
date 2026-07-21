@@ -16,6 +16,8 @@ import { addSession, lookupSession, removeSession, readSessionMap } from './sess
 import { apiError, OpenCodeApiError, isNotFound } from './errors.js';
 // legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
 import { resolveEnv, resolveEnvInt } from './env.js';
+// legate-tcg: server-side credential redaction for legate_get_config.
+import { redactSecrets } from './redact.js';
 // legate-e1i: D-06/D-07 fallback chain extracted to routing.ts so it is unit-testable
 // without importing this module (which starts the MCP server on import). Behavior is
 // unchanged — the local resolveServerUrl wrapper below supplies BASE_URL.
@@ -110,6 +112,29 @@ function errText(err: unknown): ToolResult {
   return { content: [{ type: 'text', text: String(err) }], isError: true };
 }
 
+// legate-tcg: opt-in gate for the exec-capable tools (legate_session_shell,
+// legate_inject_mcp_server). These are prompt-injection-mediated RCE primitives —
+// shell runs arbitrary commands on the OpenCode host; inject registers a command
+// the host will spawn. They still REGISTER unconditionally (the 40-tool contract
+// and the smoke test depend on it), but their handlers refuse to act unless the
+// operator has explicitly opted in via LEGATE_ENABLE_EXEC_TOOLS. Read at CALL time
+// (not module init) so tests and .mcp.json env changes take effect without a
+// rebuild — consistent with the codebase's other env reads.
+function execToolsEnabled(): boolean {
+  const v = process.env.LEGATE_ENABLE_EXEC_TOOLS;
+  return v === '1' || v?.toLowerCase() === 'true';
+}
+
+// legate-tcg: the disabled-tool message. `whatItDoes` completes "This tool ..." so
+// each tool names its own hazard while sharing the enable instructions verbatim.
+function execDisabledMessage(toolName: string, whatItDoes: string): string {
+  return (
+    `${toolName} is disabled. This tool ${whatItDoes}. ` +
+    `Set LEGATE_ENABLE_EXEC_TOOLS=1 in the legate MCP server's environment ` +
+    `(.mcp.json env block or shell profile) and restart to enable.`
+  );
+}
+
 // legate-epe / D-12: the ONE definition of the stale-session error text. Every
 // tool that discovers a session 404 surfaces exactly this message. serverName is
 // the registry name (typically entry?.server ?? 'unknown'); url is the server URL
@@ -166,12 +191,20 @@ function registerSessionTool<S extends z.ZodTypeAny>(
     dir: string | undefined;
     args: z.infer<S> & { sessionId: string; directory?: string };
   }) => Promise<unknown>,
+  // legate-tcg: optional call-time gate. Returns a non-null message to REFUSE the
+  // call (surfaced as an isError response before any directory/URL/client work or
+  // HTTP), or null to proceed. Tools without a gate always proceed.
+  options?: { gate?: () => string | null },
 ): void {
   // legate-epe: the callback is cast because McpServer.registerTool's ToolCallback
   // is a deferred conditional type over the (here-generic) schema S; TS cannot prove
   // a concrete callback assignable to it inside a generic wrapper. Runtime shape is
   // unchanged — the SDK still validates args against `config.inputSchema`.
   const cb = async (rawArgs: unknown): Promise<ToolResult> => {
+    // legate-tcg: gate check happens first — before resolveDirectory / resolveServerUrl /
+    // getClient / any HTTP — so a disabled tool never touches the OpenCode host.
+    const gateMsg = options?.gate?.();
+    if (gateMsg) return { content: [{ type: 'text', text: gateMsg }], isError: true };
     const args = rawArgs as z.infer<S> & { sessionId: string; directory?: string };
     const dir = resolveDirectory(args.directory);
     try {
@@ -199,9 +232,14 @@ function registerServerTool<S extends z.ZodTypeAny>(
     dir: string | undefined;
     args: z.infer<S> & { directory?: string };
   }) => Promise<unknown>,
+  // legate-tcg: optional call-time gate — see registerSessionTool for semantics.
+  options?: { gate?: () => string | null },
 ): void {
   // legate-epe: callback cast — see registerSessionTool for the rationale.
   const cb = async (rawArgs: unknown): Promise<ToolResult> => {
+    // legate-tcg: gate check first — refuse before any HTTP work (see registerSessionTool).
+    const gateMsg = options?.gate?.();
+    if (gateMsg) return { content: [{ type: 'text', text: gateMsg }], isError: true };
     const args = rawArgs as z.infer<S> & { directory?: string };
     const dir = resolveDirectory(args.directory);
     try {
@@ -1514,18 +1552,19 @@ registerServerTool(
 registerServerTool(
   'legate_get_config',
   {
-    description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. Pass directory to scope to a specific project root. WARNING: response may include sensitive values (API keys, tokens) from the OpenCode config. Do not log or display raw output in shared environments.',
+    description: 'Get the current OpenCode configuration object. Returns the full Config as JSON. Pass directory to scope to a specific project root. WARNING: the OpenCode config can hold provider credentials — so credential-shaped fields (keys matching apiKey/api_key/token/secret/password/credential/authorization) are redacted server-side to the literal "[REDACTED]" before this tool returns. All other fields are returned unchanged.',
     inputSchema: z.object({
       directory: z.string().optional().describe('Absolute path to the project root. Falls back to LEGATE_DEFAULT_PROJECT env var if not provided.'),
     }),
   },
   async ({ client, dir }) => {
-    // NOTE: Response may contain API keys or provider credentials — do not log or cache.
     const { data, error } = await client.config.get({
       query: dir ? { directory: dir } : undefined,
     });
     if (error) throw apiError(error);
-    return data;
+    // legate-tcg: redact credential-shaped fields before the config leaves this
+    // process — the raw config can carry provider API keys/tokens.
+    return redactSecrets(data);
   }
 );
 
@@ -1551,7 +1590,7 @@ registerServerTool(
 registerSessionTool(
   'legate_session_shell',
   {
-    description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Legate layer. sessionId, agent, and command are all required. model override is optional.',
+    description: 'WARNING: Executes an arbitrary shell command in the context of an OpenCode session. The command runs in the session\'s working directory with the session\'s environment. Returns AssistantMessage containing command output. Use with caution — there is no sandboxing at the Legate layer. DISABLED BY DEFAULT: this tool only runs when LEGATE_ENABLE_EXEC_TOOLS=1 is set in the legate MCP server\'s environment; otherwise every call returns an isError with enable instructions. sessionId, agent, and command are all required. model override is optional.',
     inputSchema: z.object({
       sessionId: z.string().min(1).describe('Session ID in which to execute the command'),
       command: z.string().describe('Shell command to execute in the session\'s context'),
@@ -1576,14 +1615,16 @@ registerSessionTool(
     });
     if (error) handleNotFound(error, sessionId, serverUrl);
     return data;
-  }
+  },
+  // legate-tcg: opt-in gate — arbitrary command execution on the OpenCode host.
+  { gate: () => execToolsEnabled() ? null : execDisabledMessage('legate_session_shell', 'executes arbitrary commands on the OpenCode host') },
 );
 
 // API-07: legate_inject_mcp_server — add an MCP server to OpenCode at runtime
 registerServerTool(
   'legate_inject_mcp_server',
   {
-    description: 'WARNING: with configType "local" this registers an arbitrary command that the OpenCode host will execute as a subprocess — only inject MCP servers you trust. Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
+    description: 'WARNING: with configType "local" this registers an arbitrary command that the OpenCode host will execute as a subprocess — only inject MCP servers you trust. DISABLED BY DEFAULT: this tool only runs when LEGATE_ENABLE_EXEC_TOOLS=1 is set in the legate MCP server\'s environment; otherwise every call returns an isError with enable instructions. Add an MCP server to the OpenCode instance at runtime. For local stdio servers, pass configType: "local" with commandArgs as an array (e.g. ["node", "/path/to/server.js"]). For remote HTTP/SSE servers, pass configType: "remote" with url. Returns the updated MCP server map { [serverName]: McpStatus }.',
     inputSchema: z.object({
       name: z.string().describe('Unique name for this MCP server in the OpenCode MCP registry'),
       configType: z.enum(['local', 'remote']).describe('"local" for stdio subprocess MCP servers; "remote" for HTTP/SSE MCP servers'),
@@ -1625,7 +1666,9 @@ registerServerTool(
     });
     if (error) throw apiError(error);
     return data;
-  }
+  },
+  // legate-tcg: opt-in gate — registers a command the OpenCode host will spawn.
+  { gate: () => execToolsEnabled() ? null : execDisabledMessage('legate_inject_mcp_server', 'registers an arbitrary command the OpenCode host will spawn as a subprocess') },
 );
 
 // API-08: legate_list_tools — list available tools per model (dual-endpoint)

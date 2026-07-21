@@ -264,6 +264,7 @@ With everything wired up, follow `examples/test-task.md` to confirm the full cre
 | `LEGATE_SERVER_PASSWORD` | _(unset)_ | HTTP Basic Auth password for OpenCode server (read at every tool call) |
 | `LEGATE_SERVER_USERNAME` | `opencode` | HTTP Basic Auth username (only used when `LEGATE_SERVER_PASSWORD` is set) |
 | `LEGATE_SESSION_TTL_MS` | `86400000` | Sessions older than this (ms) are pruned from sessions.json on every read (default: 24 h) |
+| `LEGATE_ENABLE_EXEC_TOOLS` | _(unset)_ | Opt-in switch for the exec-capable tools `legate_session_shell` and `legate_inject_mcp_server`. Set to `1` or `true` to enable; unset means both tools return an isError with enable instructions (see Security) |
 
 > **Deprecated names:** Old `OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, and `OPENCODE_DEFAULT_PROJECT` env var names still work but emit a stderr deprecation warning on first use. Migrate to the `LEGATE_*` names above.
 
@@ -281,6 +282,14 @@ To override per-project, edit the `env` field of `.mcp.json`:
   "LEGATE_TIMEOUT_MS": "300000"
 }
 ```
+
+### Security
+
+Two layers of defense-in-depth run without any configuration on your part (MCP clients still gate every tool call behind user approval — these are additional server-side guards):
+
+- **`legate_get_config` redaction (always on).** The OpenCode config can carry provider API keys and tokens. Before `legate_get_config` returns, any field whose key looks credential-shaped (matches `apiKey`, `api_key`, `token`, `secret`, `password`, `credential`, or `authorization`, case-insensitively) has its value replaced with the literal `[REDACTED]`. Arrays and nested objects under such a key are redacted wholesale. All other fields are returned unchanged. No configuration is required.
+
+- **Exec-tool opt-in gate (`LEGATE_ENABLE_EXEC_TOOLS`).** `legate_session_shell` runs arbitrary commands on the OpenCode host, and `legate_inject_mcp_server` (with `configType: "local"`) registers a command the host will spawn as a subprocess. Both are registered but **disabled by default**: unless `LEGATE_ENABLE_EXEC_TOOLS` is set to `1` or `true` in the legate MCP server's environment, every call returns an isError explaining how to enable it. Set it in the `.mcp.json` `env` block (or your shell profile) and restart to enable. Leave it unset if you do not need shell execution or runtime MCP injection.
 
 ## Multi-Server Registry
 
@@ -365,7 +374,7 @@ If you use [GSD (get-shit-done)](https://github.com/scottyeager/get-shit-done) f
 
 `scripts/patch-gsd-legate.sh` fixes this. It patches the two agent definition files in `~/.claude/agents/` to:
 
-1. Add `mcp__prefect__legate_*` to the `tools:` frontmatter so legate tools are actually available inside the subagent
+1. Add `mcp__legate__legate_*` to the `tools:` frontmatter so legate tools are actually available inside the subagent
 2. Append a `<legate_delegation>` block with precise guidance on when to delegate, the canonical create → run → diff → test → commit → delete loop, and a fallback if the Legate server is offline
 
 ### Usage
@@ -393,6 +402,8 @@ $(npm root -g)/@momidala/legate/scripts/patch-gsd-legate.sh
 > **After `/gsd-update`:** GSD updates overwrite agent files, which removes the patches. Re-run `patch-gsd-legate.sh` after any GSD update.
 
 > **Restart required:** Claude Code must be restarted (or `/mcp` re-initialized) for changes to agent frontmatter to take effect in newly spawned subagents.
+
+> **Migrating an existing `.mcp.json` from the `prefect` key to `legate`:** the `mcpServers` key in `.mcp.json` determines the tool namespace Claude Code exposes — a key of `legate` surfaces tools as `mcp__legate__legate_*`. If you created `.mcp.json` before this version, it may still have the old `prefect` key, meaning your tools currently surface as `mcp__prefect__legate_*`. Either run `legate init --force` in your project or hand-rename the key in `.mcp.json`. If you use the GSD integration above, also re-run `bash scripts/patch-gsd-legate.sh` afterward — it detects agent files patched under the old `mcp__prefect__legate_*` prefix and upgrades them to `mcp__legate__legate_*` automatically (`--status` will flag any agent still on the legacy prefix). Until you migrate, tools keep the old `mcp__prefect__` prefix and continue to work — nothing breaks in the meantime.
 
 ## Agent Checkpointing
 
