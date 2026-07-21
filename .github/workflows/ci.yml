@@ -28,6 +28,28 @@ jobs:
 
       - run: npm test
 
+  test-windows:
+    # legate-od3: the codebase has real win32 branches (src/cli.ts npm_config_global
+    # handling, src/autostart.ts opencode.cmd) that the ubuntu-only `test` job above
+    # never exercises. This job runs the same `npm test` (tsc + node --test build/)
+    # on Windows. It deliberately does NOT run `npm run build` — that script's
+    # `chmod 755 ...` step is POSIX-only and would fail under Windows cmd/pwsh;
+    # `npm test`'s own `tsc && node --test build/` never invokes it.
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      # See comment in the `test` job: lifecycle scripts are skipped on CI.
+      - run: npm ci --ignore-scripts
+
+      - run: npm test
+
   pack-check:
     runs-on: ubuntu-latest
     steps:
@@ -63,6 +85,12 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - run: npm run lint
+
+      # Cheapest place for a standalone type-check: `npm test` already runs `tsc`
+      # (no --noEmit) as a side effect of producing `build/`, but this makes the
+      # type-check an explicit, independently-failing gate without adding a
+      # whole new job/matrix leg just for it.
+      - run: npm run typecheck
 
       # format:check is intentionally not gated in CI: the existing codebase's
       # style (aligned inline comments, single-line try/catch bodies, long
