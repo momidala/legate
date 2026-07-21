@@ -56,7 +56,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -113,7 +113,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         path: { id: sessionId },
         query: { ...(limit !== undefined ? { limit } : {}), ...(dir ? { directory: dir } : {}) },
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       // legate-ur1: cap the payload so a long history cannot blow the MCP client's context.
       return capMessagesResponse((data ?? []) as unknown[], maxResponseChars());
     }
@@ -136,7 +136,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         path: { id: sessionId, messageID: messageId },  // SDK path param is messageID (capital D)
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -157,8 +157,8 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
-      removeSession(sessionId);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
+      await removeSession(sessionId);
       return data;
     }
   );
@@ -181,7 +181,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         body: { title },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -202,7 +202,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       // OpenCode only tracks sessions created with parentID (native children).
       // Fork-created sessions are tracked locally in sessions.json with parentId set.
       // Merge both sources, deduplicating by session id.
@@ -233,7 +233,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         query: dir ? { directory: dir } : undefined,
         // NO body — SessionUnrevertData.body is typed `never`
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -266,7 +266,7 @@ export function registerSession(server: McpServer, ctx: ServerContext): void {
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       if (!data) throw new Error('Session command returned no data');
       // legate-ngl: honest per-element validation; partsDropped surfaced only when > 0.
       const { parts: cmdParts, dropped } = validateParts((data as { parts?: unknown }).parts, 'legate_session_command');
@@ -325,7 +325,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
           signal: controller.signal,
         });
         clearTimeout(timer);
-        if (error) handleNotFound(error, sessionId, serverUrl);
+        if (error) await handleNotFound(error, sessionId, serverUrl);
         return okJson({ existed, accepted: data });
       } catch (err) {
         clearTimeout(timer);
@@ -360,7 +360,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         body: { providerID, modelID },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -381,7 +381,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -402,7 +402,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -423,7 +423,7 @@ WARNING: If AGENTS.md is staged for deletion in git (shows as "D" in git status)
         path: { id: sessionId },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );

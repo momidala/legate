@@ -295,7 +295,7 @@ export function registerDiscovery(server: McpServer, ctx: ServerContext): void {
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) ctx.handleNotFound(error, sessionId, serverUrl);
+      if (error) await ctx.handleNotFound(error, sessionId, serverUrl);
       return data;
     },
     // legate-tcg: opt-in gate — arbitrary command execution on the OpenCode host.

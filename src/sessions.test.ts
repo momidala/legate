@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
+import { lock } from 'proper-lockfile';
 // expects Plan 02 to export _resetWarnFlags from sessions.ts
 import { readSessionMap, writeSessionMap, addSession, removeSession, lookupSession, atomicCheckAndAdd, _resetWarnFlags, _runMigration } from './sessions.js';
 
@@ -43,11 +44,11 @@ test('writeSessionMap creates parent directory and writes pretty-printed JSON wi
   }
 });
 
-test('addSession persists a new entry and lookupSession reads it back', () => {
+test('addSession persists a new entry and lookupSession reads it back', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
     const entry = lookupSession('ses_abc123', regPath);
     assert.equal(entry?.server, 'local');
     assert.equal(entry?.url, 'http://localhost:4096');
@@ -57,7 +58,7 @@ test('addSession persists a new entry and lookupSession reads it back', () => {
   }
 });
 
-test('lookupSession returns undefined for unknown sessionId', () => {
+test('lookupSession returns undefined for unknown sessionId', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
@@ -65,7 +66,7 @@ test('lookupSession returns undefined for unknown sessionId', () => {
     const result = lookupSession('ses_unknown', regPath);
     assert.equal(result, undefined);
     // Also test with a file that has a different sessionId
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
     const result2 = lookupSession('ses_unknown', regPath);
     assert.equal(result2, undefined);
   } finally {
@@ -73,13 +74,13 @@ test('lookupSession returns undefined for unknown sessionId', () => {
   }
 });
 
-test('removeSession removes a known entry and persists', () => {
+test('removeSession removes a known entry and persists', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
-    addSession('ses_def456', { server: 'dev', url: 'http://devbox:4097' }, regPath);
-    removeSession('ses_abc123', regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    await addSession('ses_def456', { server: 'dev', url: 'http://devbox:4097' }, regPath);
+    await removeSession('ses_abc123', regPath);
     const map = readSessionMap(regPath);
     assert.equal(Object.keys(map.sessions).length, 1);
     assert.ok('ses_def456' in map.sessions, 'ses_def456 should remain');
@@ -89,12 +90,12 @@ test('removeSession removes a known entry and persists', () => {
   }
 });
 
-test('removeSession on unknown id is a silent no-op (does not throw)', () => {
+test('removeSession on unknown id is a silent no-op (does not throw)', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    // Call removeSession on an empty map — should not throw
-    assert.doesNotThrow(() => removeSession('does-not-exist', regPath));
+    // Call removeSession on an empty map — should not reject
+    await assert.doesNotReject(removeSession('does-not-exist', regPath));
     const map = readSessionMap(regPath);
     assert.deepEqual(map, { sessions: {} });
   } finally {
@@ -128,11 +129,11 @@ test('readSessionMap returns { sessions: {} } when sessions field is missing or 
   }
 });
 
-test('addSession stores model when provided and lookupSession returns it', () => {
+test('addSession stores model when provided and lookupSession returns it', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096', model: { providerID: 'vllm', modelID: 'qwen3' } }, regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096', model: { providerID: 'vllm', modelID: 'qwen3' } }, regPath);
     const entry = lookupSession('ses_abc123', regPath);
     assert.deepEqual(entry?.model, { providerID: 'vllm', modelID: 'qwen3' });
   } finally {
@@ -140,11 +141,11 @@ test('addSession stores model when provided and lookupSession returns it', () =>
   }
 });
 
-test('addSession without model stores entry with no model field', () => {
+test('addSession without model stores entry with no model field', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
     const entry = lookupSession('ses_abc123', regPath);
     assert.equal(entry?.model, undefined);
   } finally {
@@ -152,12 +153,12 @@ test('addSession without model stores entry with no model field', () => {
   }
 });
 
-test('addSession stamps createdAt on new entries', () => {
+test('addSession stamps createdAt on new entries', async () => {
   const dir = freshTmp();
   try {
     const regPath = join(dir, 'sessions.json');
     const before = Date.now();
-    addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    await addSession('ses_abc123', { server: 'local', url: 'http://localhost:4096' }, regPath);
     const after = Date.now();
     const entry = lookupSession('ses_abc123', regPath);
     assert.ok(entry?.createdAt !== undefined, 'createdAt should be set');
@@ -391,6 +392,86 @@ test('atomicCheckAndAdd enforces capacity after pruning dead sessions', async ()
     assert.ok(result.includes('at capacity'), 'error should mention capacity');
   } finally {
     (globalThis as Record<string, unknown>).fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── legate-ayq: shared-lock serialization + failure semantics ───────────────
+// addSession/removeSession now go through the SAME retrying async lock as
+// atomicCheckAndAdd, so no write path can clobber another's.
+
+test('legate-ayq: concurrent addSession + atomicCheckAndAdd never lose either write', async () => {
+  const dir = freshTmp();
+  const origFetch = globalThis.fetch;
+  try {
+    const regPath = join(dir, 'sessions.json');
+    // Any liveness probe answers 200 — no session is pruned, so both writes must persist.
+    (globalThis as Record<string, unknown>).fetch = async () => new Response('{}', { status: 200 });
+    // Fire both writers at the same file simultaneously. They contend for the ONE
+    // retrying lock, so serialization — not a lost write — is the only possible outcome.
+    await Promise.all([
+      addSession('ses_add', { server: 'srvA', url: 'http://localhost:4096' }, regPath),
+      atomicCheckAndAdd('ses_atomic', { server: 'srvB', url: 'http://localhost:4097' }, null, regPath),
+    ]);
+    const map = readSessionMap(regPath);
+    assert.ok('ses_add' in map.sessions, 'addSession write must survive concurrent atomicCheckAndAdd');
+    assert.ok('ses_atomic' in map.sessions, 'atomicCheckAndAdd write must survive concurrent addSession');
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('legate-ayq: removeSession logs and skips when the lock cannot be acquired', async () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'sessions.json');
+    await addSession('ses_keep', { server: 'local', url: 'http://localhost:4096' }, regPath);
+    // Hold the lock so removeSession's acquisition fails deterministically (retries: 0),
+    // no sleeps or timing races.
+    const release = await lock(regPath, { realpath: false });
+    const warnings: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+    try {
+      // Idempotent cleanup: must NOT reject on lock failure — it logs and skips.
+      await assert.doesNotReject(removeSession('ses_keep', regPath, { retries: 0 }));
+    } finally {
+      console.error = origError;
+      await release();
+    }
+    assert.ok(
+      warnings.some((w) => w.includes('could not acquire sessions.json lock to remove ses_keep')),
+      `expected a lock-failure warning, got: ${JSON.stringify(warnings)}`,
+    );
+    // Skip, not delete — the (already-stale) entry is left for the TTL/liveness sweep.
+    const map = readSessionMap(regPath);
+    assert.ok('ses_keep' in map.sessions, 'entry should remain when removeSession skips on lock failure');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('legate-ayq: addSession propagates when the lock cannot be acquired', async () => {
+  const dir = freshTmp();
+  try {
+    const regPath = join(dir, 'sessions.json');
+    // Create the file so the lock target exists, then hold the lock.
+    writeSessionMap({ sessions: {} }, regPath);
+    const release = await lock(regPath, { realpath: false });
+    try {
+      // Fork registration must NOT be silently lost — the rejection propagates so the
+      // fork tool can surface an isError instead of dropping the routing mapping.
+      await assert.rejects(
+        addSession('ses_new', { server: 'local', url: 'http://localhost:4096' }, regPath, { retries: 0 }),
+      );
+    } finally {
+      await release();
+    }
+    // Nothing was written under the failed lock.
+    const map = readSessionMap(regPath);
+    assert.ok(!('ses_new' in map.sessions), 'addSession must not persist when the lock is unavailable');
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

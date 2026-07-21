@@ -151,7 +151,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
           });
           // serverUrl === sessionEntry.url === (re-looked-up) entry?.url, so handleNotFound's
           // serverUrl arg reproduces the original `entry?.url ?? serverUrl` text byte-for-byte.
-          if (error) handleNotFound(error, providedSessionId, serverUrl);
+          if (error) await handleNotFound(error, providedSessionId, serverUrl);
           return okJson({ sessionId: providedSessionId });
         } catch (err) {
           return errText(err);
@@ -206,7 +206,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
         ]);
         // Stale-session detection: if either todo or diff (the sessionId-bearing calls) returns 404, treat as stale
         for (const r of [todoResult, diffResult]) {
-          if (r.error && isNotFound(r.error)) handleNotFound(r.error, sessionId, serverUrl);
+          if (r.error && isNotFound(r.error)) await handleNotFound(r.error, sessionId, serverUrl);
         }
         if (statusResult.error) throw apiError(statusResult.error);
         if (todoResult.error) throw apiError(todoResult.error);
@@ -298,7 +298,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
           getClient(serverUrl).session.messages({ path: { id: sessionId }, query: dir ? { directory: dir } : undefined }),
           getDiff(getClient(serverUrl), sessionId, undefined, dir),
         ]);
-        if (messagesResult.error) handleNotFound(messagesResult.error, sessionId, serverUrl);
+        if (messagesResult.error) await handleNotFound(messagesResult.error, sessionId, serverUrl);
         // D-12: find last assistant message — same shape as legate_run result
         const msgs = messagesResult.data ?? [];
         const last = [...msgs].reverse().find((m) => (m.info as { role?: string }).role === 'assistant');
@@ -310,7 +310,7 @@ export function registerComposites(server: McpServer, ctx: ServerContext): void 
       } catch (err) {
         // D-12 stale-session detection — getDiff/status throw OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
-          return staleErrorResponse(sessionId);
+          return await staleErrorResponse(sessionId);
         }
         return errText(err);
       }

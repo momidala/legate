@@ -17,12 +17,12 @@ function freshTmp(): string {
   return mkdtempSync(join(tmpdir(), 'legate-routing-'));
 }
 
-test('legate-e1i: resolveServerUrl — sessionId hit returns the session URL', () => {
+test('legate-e1i: resolveServerUrl — sessionId hit returns the session URL', async () => {
   const dir = freshTmp();
   try {
     const sPath = join(dir, 'sessions.json');
     const rPath = join(dir, 'servers.json');
-    addSession('ses_known', { server: 'thor', url: 'http://thor:4096' }, sPath);
+    await addSession('ses_known', { server: 'thor', url: 'http://thor:4096' }, sPath);
     const url = resolveServerUrl('ses_known', undefined, BASE, sPath, rPath);
     assert.equal(url, 'http://thor:4096');
   } finally {

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { lock, lockSync } from 'proper-lockfile';
+import { lock } from 'proper-lockfile';
 import { buildAuthHeader } from './auth.js';
 import { migrateIfNeeded } from './migration.js';
 // legate-lcg: env chain + warn-once bookkeeping now lives in env.ts.
@@ -135,53 +135,60 @@ export function writeSessionMap(map: SessionMap, sessionsPath: string = SESSIONS
 }
 
 /**
- * Run a synchronous read-modify-write on sessions.json under proper-lockfile's lockSync
- * so concurrent MCP instances don't lose writes (legate-yho).
+ * legate-ayq: register a session under the SAME retrying async lock as atomicCheckAndAdd,
+ * doing the read-modify-write entirely inside the locked section.
  *
- * addSession/removeSession are called WITHOUT await from ~15 sites in index.ts, so their
- * signatures MUST stay synchronous — hence lockSync, not the async lock.
+ * Failure semantics — addSession is fork registration: losing the entry breaks routing for
+ * the new session (subsequent tool calls can't find its server URL). So if the lock can't be
+ * acquired after all retries, PROPAGATE the rejection to the caller — the fork tool's catch
+ * turns it into an isError response rather than silently dropping the mapping.
  *
- * Tradeoff: lockSync has NO retry support — on contention it throws immediately. Rather than
- * crash a tool call over a transient lock, we fall back to an UNLOCKED write and log a warning.
- * Best-effort persistence beats losing the operation outright; the race window (two instances
- * mid-write at the same instant) is tiny. The capacity gate that must NEVER lose a write is
- * atomicCheckAndAdd, and it uses the retrying async lock.
- *
- * Locking mirrors withSessionLock: mkdirSync the parent first, then lock sessionsPath with
- * realpath:false so a not-yet-existing sessions.json can still be locked (creates sessionsPath.lock).
+ * lockOpts is an @internal test seam: tests shrink the retry budget (e.g. { retries: 0 }) and
+ * hold the lock manually to exercise the lock-acquisition-failure path deterministically.
  */
-function withSessionLockSync(fn: () => void, sessionsPath: string): void {
-  mkdirSync(dirname(sessionsPath), { recursive: true });
-  let release: (() => void) | undefined;
-  try {
-    release = lockSync(sessionsPath, { realpath: false, stale: 30000 });
-  } catch {
-    console.error('[Legate] Warning: could not acquire sessions.json lock; writing without lock (a concurrent write may be lost)');
-  }
-  try {
-    fn();
-  } finally {
-    if (release) {
-      try { release(); } catch { /* ignore release errors */ }
-    }
-  }
-}
-
-export function addSession(sessionId: string, entry: SessionEntry, sessionsPath: string = SESSIONS_PATH): void {
-  withSessionLockSync(() => {
+export async function addSession(
+  sessionId: string,
+  entry: SessionEntry,
+  sessionsPath: string = SESSIONS_PATH,
+  lockOpts?: LockOverride,
+): Promise<void> {
+  await withSessionLock(() => {
     const map = readSessionMap(sessionsPath);
     map.sessions[sessionId] = { createdAt: Date.now(), ...entry };
     writeSessionMap(map, sessionsPath);
-  }, sessionsPath);
+  }, sessionsPath, lockOpts);
 }
 
-export function removeSession(sessionId: string, sessionsPath: string = SESSIONS_PATH): void {
-  withSessionLockSync(() => {
-    const map = readSessionMap(sessionsPath);
-    if (!(sessionId in map.sessions)) return;  // silent no-op (D-12 cleanup must be idempotent)
-    delete map.sessions[sessionId];
-    writeSessionMap(map, sessionsPath);
-  }, sessionsPath);
+/**
+ * legate-ayq: remove a session under the same retrying async lock (read-modify-write fully
+ * inside the locked section).
+ *
+ * Failure semantics — removeSession is idempotent cleanup (D-12): the entry it deletes is
+ * already stale (session 404'd or was deleted server-side). If the lock can't be acquired
+ * after all retries, LOG-AND-SKIP rather than propagate — a leftover stale entry is harmless
+ * and gets pruned later by the TTL / liveness sweep in atomicCheckAndAdd. Refusing to skip
+ * would turn a best-effort cleanup into a spurious tool error.
+ *
+ * lockOpts is an @internal test seam (see addSession).
+ */
+export async function removeSession(
+  sessionId: string,
+  sessionsPath: string = SESSIONS_PATH,
+  lockOpts?: LockOverride,
+): Promise<void> {
+  try {
+    await withSessionLock(() => {
+      const map = readSessionMap(sessionsPath);
+      if (!(sessionId in map.sessions)) return;  // silent no-op (D-12 cleanup must be idempotent)
+      delete map.sessions[sessionId];
+      writeSessionMap(map, sessionsPath);
+    }, sessionsPath, lockOpts);
+  } catch (err) {
+    console.error(
+      `[Legate] Warning: could not acquire sessions.json lock to remove ${sessionId}; ` +
+      `skipping (stale entry will be pruned by the TTL/liveness sweep): ${(err as Error).message}`,
+    );
+  }
 }
 
 export function lookupSession(sessionId: string, sessionsPath: string = SESSIONS_PATH): SessionEntry | undefined {
@@ -215,13 +222,33 @@ async function isSessionLive(sessionId: string, serverUrl: string, directory?: s
   }
 }
 
-async function withSessionLock<T>(fn: () => T | Promise<T>, sessionsPath: string = SESSIONS_PATH): Promise<T> {
+/**
+ * legate-ayq: options override for the session lock — an @internal test seam only.
+ * Tests pass a shrunken retry budget so the lock-acquisition-failure path is reachable
+ * without waiting out the full retry schedule. Production callers never pass this.
+ */
+type LockOverride = Parameters<typeof lock>[1];
+
+/**
+ * legate-ayq / WR-01: the ONE lock config every sessions.json writer shares. addSession,
+ * removeSession AND atomicCheckAndAdd all serialize through withSessionLock with these same
+ * retrying options — so no write path can clobber another's (in particular, no best-effort
+ * write can race atomicCheckAndAdd's capacity-gated write). realpath:false lets a not-yet-
+ * existing sessions.json be locked (creates sessionsPath.lock).
+ */
+const SESSION_LOCK_OPTS = {
+  realpath: false,
+  retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 500 },
+  stale: 30000,
+} as const;
+
+async function withSessionLock<T>(
+  fn: () => T | Promise<T>,
+  sessionsPath: string = SESSIONS_PATH,
+  lockOpts?: LockOverride,
+): Promise<T> {
   mkdirSync(dirname(sessionsPath), { recursive: true });
-  const release = await lock(sessionsPath, {
-    realpath: false,
-    retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 500 },
-    stale: 30000,
-  });
+  const release = await lock(sessionsPath, { ...SESSION_LOCK_OPTS, ...lockOpts });
   try {
     return await fn();
   } finally {
@@ -230,9 +257,14 @@ async function withSessionLock<T>(fn: () => T | Promise<T>, sessionsPath: string
 }
 
 /**
- * Atomically checks server capacity and registers the session in sessions.json under a file lock.
- * The lock covers the full read → liveness-check → count → check → write sequence so concurrent
- * Claude Code instances cannot both pass the capacity gate for the same server.
+ * WR-01: Atomically checks server capacity and registers the session in sessions.json under a
+ * file lock. The lock covers the full read → liveness-check → count → check → write sequence so
+ * concurrent Claude Code instances cannot both pass the capacity gate for the same server.
+ *
+ * legate-ayq: this capacity-gated write is now fully serialized against addSession/removeSession
+ * too — all three go through withSessionLock / SESSION_LOCK_OPTS (the same retrying lock). There
+ * is no longer any unlocked-fallback write path that could clobber this write; EVERY sessions.json
+ * write serializes through one lock.
  *
  * Before counting, each existing session for the target server is verified via GET /session/:id.
  * Any entry whose server returns non-200 (including connection refused after a restart) is pruned

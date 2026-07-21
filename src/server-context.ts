@@ -59,8 +59,11 @@ export interface ServerContext {
 
   // legate-epe / D-12: the ONE definition of the stale-session error text + handlers.
   staleSessionMessage(sessionId: string, serverName: string, url: string): string;
-  handleNotFound(error: unknown, sessionId: string, serverUrl: string): never;
-  staleErrorResponse(sessionId: string): ToolResult;
+  // legate-ayq: async because removeSession now acquires the retrying async lock. Callers
+  // must `await handleNotFound(...)` — awaiting a Promise<never> still narrows the SDK
+  // result's `data` in the following code (control-flow analysis treats it as terminating).
+  handleNotFound(error: unknown, sessionId: string, serverUrl: string): Promise<never>;
+  staleErrorResponse(sessionId: string): Promise<ToolResult>;
 
   // legate-epe: shared registration wrappers (bound to the server).
   registerSessionTool<S extends z.ZodTypeAny>(
@@ -194,12 +197,13 @@ export function createServerContext(server: McpServer): ServerContext {
   // legate-epe / D-12: pre-throw 404 handler for SDK { data, error } results. On a
   // 404 it removes the now-stale session from sessions.json and throws the canonical
   // stale-session Error; any other API error is rethrown as a typed OpenCodeApiError.
-  // Declared `never` so callers narrow `data` after `if (error) handleNotFound(...)`.
+  // Declared `Promise<never>` so callers narrow `data` after `if (error) await handleNotFound(...)`.
   // legate-dxw: typed 404 check (isNotFound) replaces the old JSON string-matching.
-  function handleNotFound(error: unknown, sessionId: string, serverUrl: string): never {
+  // legate-ayq: async so the stale-session removeSession runs under the retrying async lock.
+  async function handleNotFound(error: unknown, sessionId: string, serverUrl: string): Promise<never> {
     if (isNotFound(error)) {
       const entry = lookupSession(sessionId);
-      removeSession(sessionId);
+      await removeSession(sessionId);
       throw new Error(staleSessionMessage(sessionId, entry?.server ?? 'unknown', serverUrl));
     }
     throw apiError(error);
@@ -210,9 +214,10 @@ export function createServerContext(server: McpServer): ServerContext {
   // handlers.ts. Mirrors handleNotFound but returns an isError envelope instead of
   // throwing, recovering the stale URL from the (already-removed) session entry and
   // falling back to resolveServerUrl() exactly as the original inline copies did.
-  function staleErrorResponse(sessionId: string): ToolResult {
+  // legate-ayq: async so the stale-session removeSession runs under the retrying async lock.
+  async function staleErrorResponse(sessionId: string): Promise<ToolResult> {
     const entry = lookupSession(sessionId);
-    removeSession(sessionId);
+    await removeSession(sessionId);
     const staleUrl = entry?.url ?? resolveServerUrl();
     return {
       content: [{ type: 'text', text: staleSessionMessage(sessionId, entry?.server ?? 'unknown', staleUrl) }],

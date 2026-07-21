@@ -80,7 +80,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
           });
           if (error) {
             if (isNotFound(error)) {
-              removeSession(sessionId);
+              await removeSession(sessionId);
               throw new Error(staleSessionMessage(sessionId, entry.server, serverUrl));
             }
             throw apiError(error);
@@ -189,7 +189,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         }
         // D-12 stale-session detection — runPrompt throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
-          return staleErrorResponse(sessionId);
+          return await staleErrorResponse(sessionId);
         }
         return errText(err);
       }
@@ -232,7 +232,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return { sessionId, accepted: true };
     }
   );
@@ -258,7 +258,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
       } catch (err) {
         // D-12 stale-session detection — getDiff throws OpenCodeApiError; legate-dxw: typed 404 check replaces JSON string-matching
         if (err instanceof OpenCodeApiError && err.isNotFound()) {
-          return staleErrorResponse(sessionId);
+          return await staleErrorResponse(sessionId);
         }
         return errText(err);
       }
@@ -289,7 +289,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         body: { response },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
@@ -323,7 +323,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
           // for the ONE canonical text. The pre-capture avoids the race where another
           // process removes the session from sessions.json during the API call.
           if (isNotFound(error)) {
-            removeSession(sessionId);
+            await removeSession(sessionId);
             throw new Error(staleSessionMessage(sessionId, sourceEntry?.server ?? 'unknown', serverUrl));
           }
           throw apiError(error);
@@ -331,7 +331,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         // Persist the forked session so subsequent tool calls can route to the same server.
         // Store parentId so legate_session_children can find fork-created children locally.
         if (data && sourceEntry) {
-          addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId, createdAt: Date.now() });
+          await addSession((data as { id: string }).id, { ...sourceEntry, parentId: sessionId, createdAt: Date.now() });
         }
         return okJson(data);
       } catch (err) {
@@ -359,7 +359,7 @@ export function registerCore(server: McpServer, ctx: ServerContext): void {
         body: { messageID, ...(partID ? { partID } : {}) },
         query: dir ? { directory: dir } : undefined,
       });
-      if (error) handleNotFound(error, sessionId, serverUrl);
+      if (error) await handleNotFound(error, sessionId, serverUrl);
       return data;
     }
   );
