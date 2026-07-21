@@ -21,6 +21,8 @@ This is the Legate MCP server — a TypeScript project that exposes OpenCode's H
 - `LEGATE_SERVER_URL` (default: `http://localhost:4096`) - OpenCode API endpoint
 - `LEGATE_TIMEOUT_MS` (default: 120000) - Timeout for `legate_run`
 - `LEGATE_DEFAULT_PROJECT` - Working directory for auto-started OpenCode instances
+- `LEGATE_ENABLE_EXEC_TOOLS` - Set to `1` to enable `session_shell`/`inject_mcp_server` (disabled by default)
+- See README Configuration for the full table (`LEGATE_SESSION_TTL_MS`, `LEGATE_AUTOSTART_TIMEOUT_MS`, `LEGATE_MAX_RESPONSE_CHARS`, auth vars)
 
 ### Critical Constraints
 - **Always pass `directory` explicitly** to all tools - never rely on defaults
@@ -29,7 +31,7 @@ This is the Legate MCP server — a TypeScript project that exposes OpenCode's H
 
 ### Testing
 - Test with `npm run test` (runs all test files in build/)
-- Run individual tests with `node build/<test-file>.js`
+- Run an individual test file with `node --test build/<name>.test.js`
 - Validate with `examples/test-task.md` end-to-end test
 
 ### Environment Setup

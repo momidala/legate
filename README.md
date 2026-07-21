@@ -146,7 +146,7 @@ npm install
 npm run build
 ```
 
-`npm run build` runs `tsc && chmod 755 build/index.js`. The `build/` directory is gitignored, so this step is REQUIRED on every fresh clone — Claude Code will fail to spawn the MCP server otherwise.
+`npm run build` runs `tsc && chmod 755 build/index.js build/cli.js`. The `build/` directory is gitignored, so this step is REQUIRED on every fresh clone — Claude Code will fail to spawn the MCP server otherwise.
 
 ### 2. Verify the project-scoped MCP registration
 
@@ -265,8 +265,9 @@ With everything wired up, follow `examples/test-task.md` to confirm the full cre
 | `LEGATE_SERVER_USERNAME` | `opencode` | HTTP Basic Auth username (only used when `LEGATE_SERVER_PASSWORD` is set) |
 | `LEGATE_SESSION_TTL_MS` | `86400000` | Sessions older than this (ms) are pruned from sessions.json on every read (default: 24 h) |
 | `LEGATE_ENABLE_EXEC_TOOLS` | _(unset)_ | Opt-in switch for the exec-capable tools `legate_session_shell` and `legate_inject_mcp_server`. Set to `1` or `true` to enable; unset means both tools return an isError with enable instructions (see Security) |
+| `LEGATE_MAX_RESPONSE_CHARS` | `400000` | Character cap on `legate_get_diff` / `legate_session_messages` payloads; oversized results are returned as a `{ truncated: true, ... }` envelope (patches truncated / oldest messages dropped) |
 
-> **Deprecated names:** Old `OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, and `OPENCODE_DEFAULT_PROJECT` env var names still work but emit a stderr deprecation warning on first use. Migrate to the `LEGATE_*` names above.
+> **Deprecated names:** Old `PREFECT_*` and `OPENCODE_*` env var names (e.g. `OPENCODE_URL`, `PREFECT_SERVER_PASSWORD`) still work but emit a stderr deprecation warning on first use. Migrate to the `LEGATE_*` names above — see [Migrating from @momidala/prefect](#migrating-from-momidalaprefect).
 
 > **Security (INFRA-06):** Do NOT put `LEGATE_SERVER_PASSWORD` in the `.mcp.json` `env` block.
 > `.mcp.json` is committed to version control — storing credentials there leaks them.
@@ -464,7 +465,9 @@ If Claude Code runs inside WSL2 and OpenCode also runs inside WSL2, `localhost:4
 
 ```
 .
-├── src/index.ts         # MCP server (40 tools)
+├── src/index.ts         # Composition root / entry point (createServer + gated main)
+├── src/tools/           # The 40 tool definitions (core, composites, session, discovery)
+├── src/server-context.ts # Shared client cache, envelopes, registration wrappers
 ├── build/               # Compiled output (gitignored)
 ├── scripts/
 │   └── patch-gsd-legate.sh  # Patch GSD agents for Legate delegation

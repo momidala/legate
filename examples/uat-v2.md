@@ -541,6 +541,8 @@ legate_session_command({
 
 ### T7.6 — `legate_session_shell` executes a shell command in session context
 
+> **Prerequisite (v3.0.0+):** requires `LEGATE_ENABLE_EXEC_TOOLS=1` in the MCP server env. Without it this tool returns `isError` with enable instructions — mark the test SKIPPED, not failed.
+
 ```
 legate_session_shell({
   sessionId: SESSION_ID_THOR,
@@ -824,6 +826,8 @@ legate_list_tools({ provider: "vllm" })
 **Pass:** Error: `provider and model must be supplied together`.
 
 ---
+
+> **Prerequisite for T8.14 / T8.15 (v3.0.0+):** requires `LEGATE_ENABLE_EXEC_TOOLS=1` in the MCP server env. Without it these tools return `isError` with enable instructions — mark the tests SKIPPED, not failed.
 
 ### T8.14 — `legate_inject_mcp_server` adds a local MCP server at runtime
 

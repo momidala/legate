@@ -21,7 +21,7 @@ This prompt is intentionally specified in full so the model has no ambiguity. Th
 
 Claude Code (or a human operator) executes the following 6 steps in order:
 
-1. **Create session.** Call `legate_create_session` with `{title: "test-task"}`. Save the returned `id` as `SESSION_ID`.
+1. **Create session.** Call `legate_create_session` with `{title: "test-task", directory: "<absolute path to this repo>"}` — always pass `directory` explicitly (see CLAUDE.md canonical loop). Save the returned `id` as `SESSION_ID`.
 2. **Run prompt.** Call `legate_run` with `{sessionId: SESSION_ID, prompt: <the prompt above>}`. Wait for it to return (up to 120 seconds — the default `LEGATE_TIMEOUT_MS`).
 3. **Get diff.** Call `legate_get_diff` with `{sessionId: SESSION_ID}`. Confirm the returned array contains at least one `FileDiff` whose `file` field references `examples/hello.ts`. If the array is empty, the loop failed — re-run step 2 with a correction prompt or fork the session.
 4. **Read file.** Read `examples/hello.ts` from disk. Confirm it contains the substring `greet` and a call to `console.log`.

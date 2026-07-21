@@ -74,6 +74,7 @@ const LEGATE_SKILL_CARD_STATIC: string = `# Legate — Skill Card
 | Shell/infra | session_shell, inject_mcp_server |
 
 ## Rules
+- \`session_shell\` and \`inject_mcp_server\` are DISABLED unless \`LEGATE_ENABLE_EXEC_TOOLS=1\` is set in the MCP server env — do not retry when disabled, report the requirement
 - Always pass \`directory\` explicitly to create_session — never rely on server default
 - Delete every session when done — sessions accumulate indefinitely if not cleaned
 - Never commit from inside a legate_run call — you commit, OpenCode edits

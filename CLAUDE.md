@@ -62,9 +62,10 @@ The default response is `once`, `always`, or `reject` (NOT `allow`/`deny`/`allow
 
 ## Environment
 
-- The MCP server reads `LEGATE_SERVER_URL` (default `http://localhost:4096`) and `LEGATE_TIMEOUT_MS` (default `120000`). Old `OPENCODE_URL` name still works but emits a deprecation warning — migrate to `LEGATE_SERVER_URL`.
+- The MCP server reads `LEGATE_SERVER_URL` (default `http://localhost:4096`) and `LEGATE_TIMEOUT_MS` (default `120000`). Old `PREFECT_*` and `OPENCODE_*` names (e.g. `OPENCODE_URL`) still work but emit deprecation warnings — migrate to the `LEGATE_*` names.
+- `legate_session_shell` and `legate_inject_mcp_server` are DISABLED by default. They return an isError with instructions unless `LEGATE_ENABLE_EXEC_TOOLS=1` is set in the MCP server's environment. Do not retry them when disabled — report the requirement instead.
 - For long-running tasks, set `LEGATE_TIMEOUT_MS` higher in the `env` field of `.mcp.json` and restart Claude Code.
-- HTTP Basic Auth: set `LEGATE_SERVER_PASSWORD` (and optionally `LEGATE_SERVER_USERNAME`, default `opencode`) in your shell profile. Do NOT put `LEGATE_SERVER_PASSWORD` in `.mcp.json` — that file is committed to version control. Old `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME` names still work but emit deprecation warnings.
+- HTTP Basic Auth: set `LEGATE_SERVER_PASSWORD` (and optionally `LEGATE_SERVER_USERNAME`, default `opencode`) in your shell profile. Do NOT put `LEGATE_SERVER_PASSWORD` in `.mcp.json` — that file is committed to version control. Old `PREFECT_*` / `OPENCODE_*` names still work but emit deprecation warnings. Credentials are only sent to loopback or registry-registered hosts.
 - OpenCode must be running: `opencode serve --port 4096`. Health check: `curl http://localhost:4096/global/health`.
 
 ## Validation
